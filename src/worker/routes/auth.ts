@@ -4,7 +4,7 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { cookieOptions, endSession, type SessionRow, signedIn, startSession } from "../auth";
 import type { Env } from "../env";
 import { HttpError, readJson, str } from "../http";
-import { pkceChallenge, randomToken, timingSafeEqual } from "../lib/crypto";
+import { fromBase64Url, pkceChallenge, randomToken, timingSafeEqual, toBase64Url } from "../lib/crypto";
 import { turnstileConfigured, verifyTurnstile } from "../turnstile";
 import { googleName, parseLang, parseName, publicUser, register } from "../users";
 import { testLoginEnabled } from "./testLogin";
@@ -66,7 +66,7 @@ interface PendingSignIn {
 function readPending(cookie: string | undefined): PendingSignIn | null {
   if (!cookie) return null;
   try {
-    const p = JSON.parse(atob(cookie.replace(/-/g, "+").replace(/_/g, "/"))) as PendingSignIn;
+    const p = JSON.parse(new TextDecoder().decode(fromBase64Url(cookie))) as PendingSignIn;
     return typeof p.state === "string" &&
       typeof p.nonce === "string" &&
       typeof p.verifier === "string" &&
@@ -90,7 +90,7 @@ authRoutes.get("/google", async (c) => {
     next: safeNext(c.req.query("next")),
     expires: Date.now() + STATE_MINUTES * 60_000,
   };
-  const value = btoa(JSON.stringify(pending)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const value = toBase64Url(new TextEncoder().encode(JSON.stringify(pending)));
   setCookie(c, STATE_COOKIE, value, { ...cookieOptions(c), maxAge: STATE_MINUTES * 60 });
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   url.search = new URLSearchParams({

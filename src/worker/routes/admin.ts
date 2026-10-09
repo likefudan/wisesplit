@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { type AppEnv, requireAdmin, type UserRow, type UserStatus } from "../auth";
+import { ADMIN_ACTIONS, type AdminAction, USER_STATUSES, type UserStatus } from "../../shared/users";
+import { type AppEnv, requireAdmin, type UserRow } from "../auth";
 import { HttpError, now, readJson } from "../http";
 import { getSettings, updateSettings } from "../settings";
 import { publicUser } from "../users";
@@ -8,15 +9,14 @@ import { publicUser } from "../users";
 export const adminRoutes = new Hono<AppEnv>();
 adminRoutes.use("*", requireAdmin);
 
-const STATUSES: readonly UserStatus[] = ["pending", "approved", "rejected", "deactivated"];
 const LIST_LIMIT = 500;
 
 // Users in one state; the pending list oldest application first (the order to work through it),
 // the others newest first.
 adminRoutes.get("/users", async (c) => {
   const status = c.req.query("status") as UserStatus;
-  if (!STATUSES.includes(status))
-    throw new HttpError(400, "invalid_input", `status must be one of ${STATUSES.join(", ")}`);
+  if (!USER_STATUSES.includes(status))
+    throw new HttpError(400, "invalid_input", `status must be one of ${USER_STATUSES.join(", ")}`);
   const order = status === "pending" ? "applied_at ASC" : "applied_at DESC";
   const { results } = await c.env.DB.prepare(`SELECT * FROM users WHERE status = ? ORDER BY ${order} LIMIT ?`)
     .bind(status, LIST_LIMIT + 1)
@@ -30,17 +30,10 @@ adminRoutes.get("/users", async (c) => {
   });
 });
 
-/** Each admin action: the states it applies to and the state it leads to. */
-const ACTIONS: Record<string, { from: UserStatus[]; to: UserStatus }> = {
-  approve: { from: ["pending", "rejected"], to: "approved" },
-  reject: { from: ["pending"], to: "rejected" },
-  deactivate: { from: ["approved"], to: "deactivated" },
-  reactivate: { from: ["deactivated"], to: "approved" },
-};
-
 adminRoutes.post("/users/:id/:action", async (c) => {
-  const action = ACTIONS[c.req.param("action")];
-  if (!action) throw new HttpError(404, "not_found", "Not found");
+  const name = c.req.param("action");
+  if (!Object.hasOwn(ADMIN_ACTIONS, name)) throw new HttpError(404, "not_found", "Not found");
+  const action = ADMIN_ACTIONS[name as AdminAction];
   const admin = c.get("user");
   const id = c.req.param("id");
   if (id === admin.id) throw new HttpError(400, "cannot_change_self", "Admins can't change their own account");

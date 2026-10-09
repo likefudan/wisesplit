@@ -57,7 +57,8 @@ export function publicUser(env: Env, user: UserRow) {
 const startOfDay = () => `${now().slice(0, 10)}T00:00:00.000Z`;
 
 /**
- * Signs up the Google identity of `session`, or re-applies after a rejection. The application is
+ * Signs up the Google identity of `session` (`existing` null), or re-applies after a rejection
+ * (`existing` is the rejected user; the caller has checked it is one). The application is
  * approved at once when the admin has turned approval off, or when the applicant is an admin;
  * otherwise it waits in the pending list. The daily cap applies either way, the pending cap only
  * to applications that will wait; admins skip both so they can never be locked out.
@@ -71,8 +72,6 @@ export async function register(
   existing: UserRow | null,
   input: { name: string; lang: Lang },
 ): Promise<UserRow> {
-  if (existing && existing.status !== "rejected")
-    throw new HttpError(409, "already_registered", "This Google account has already signed up");
   const settings = await getSettings(env);
   const admin = isAdminEmail(env, session.email);
   const status = admin || !settings.requireApproval ? "approved" : "pending";

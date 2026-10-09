@@ -1,9 +1,8 @@
 import { useEffect, useState } from "preact/hooks";
 import type { Lang } from "../shared/i18n";
+import type { UserStatus } from "../shared/users";
 import { ApiError, api } from "./api";
 import { currentLang, setLang } from "./i18n";
-
-export type UserStatus = "pending" | "approved" | "rejected" | "deactivated";
 
 export interface User {
   id: string;

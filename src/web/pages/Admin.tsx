@@ -4,17 +4,8 @@ import { api } from "../api";
 import { Avatar, ErrorMessage, Loading, Page, useErrorText } from "../components";
 import { useI18n } from "../i18n";
 import { RequireUser } from "../RequireUser";
-import type { User, UserStatus } from "../session";
-
-const TABS: UserStatus[] = ["pending", "approved", "rejected", "deactivated"];
-type Action = "approve" | "reject" | "deactivate" | "reactivate";
-/** What the admin can do to a user in each state (the server allows the same, src/worker/routes/admin.ts). */
-const ACTIONS: Record<UserStatus, Action[]> = {
-  pending: ["approve", "reject"],
-  approved: ["deactivate"],
-  rejected: ["approve"],
-  deactivated: ["reactivate"],
-};
+import { type AdminAction, actionsFor, USER_STATUSES, type UserStatus } from "../../shared/users";
+import type { User } from "../session";
 
 type Listed = User & { appliedAt: string; decidedAt: string | null };
 
@@ -26,38 +17,44 @@ function UserList({ me }: { me: User }) {
   const { lang, t } = useI18n();
   const errorText = useErrorText();
   const { query, route } = useLocation();
-  const tab = TABS.includes(query.status as UserStatus) ? (query.status as UserStatus) : "pending";
+  const tab = USER_STATUSES.includes(query.status as UserStatus) ? (query.status as UserStatus) : "pending";
   const [users, setUsers] = useState<Listed[] | null>(null);
   const [truncated, setTruncated] = useState(false);
-  const [error, setError] = useState("");
+  // Loading the list and acting on a user fail separately, so a reload after a failed action
+  // doesn't wipe the message saying why it failed.
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const [actionError, setActionError] = useState<unknown>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
 
   useEffect(() => {
     let alive = true;
     setUsers(null);
-    setError("");
+    setLoadError(null);
     api<{ users: Listed[]; truncated: boolean }>(`/api/admin/users?status=${tab}`)
       .then((r) => {
         if (!alive) return;
         setUsers(r.users);
         setTruncated(r.truncated);
       })
-      .catch((e) => alive && setError(errorText(e)));
+      .catch((e) => alive && setLoadError(e));
     return () => {
       alive = false;
     };
   }, [tab, reload]);
 
-  async function act(user: Listed, action: Action) {
+  useEffect(() => setActionError(null), [tab]);
+
+  async function act(user: Listed, action: AdminAction) {
     if (action === "deactivate" && !confirm(t("admin.confirm.deactivate", { name: user.name }))) return;
     setBusy(user.id);
-    setError("");
+    setActionError(null);
     try {
       await api(`/api/admin/users/${encodeURIComponent(user.id)}/${action}`, {});
       setUsers((list) => list?.filter((u) => u.id !== user.id) ?? null);
     } catch (e) {
-      setError(errorText(e));
+      setActionError(e);
+      // The list is likely out of date (another admin acted first): show it as it is now.
       setReload((n) => n + 1);
     } finally {
       setBusy(null);
@@ -73,7 +70,7 @@ function UserList({ me }: { me: User }) {
         <a href="/admin/settings">{t("admin.settings")}</a>
       </p>
       <div class="tabs" role="tablist" aria-label={t("admin.users")}>
-        {TABS.map((s) => (
+        {USER_STATUSES.map((s) => (
           <button
             key={s}
             type="button"
@@ -86,9 +83,10 @@ function UserList({ me }: { me: User }) {
           </button>
         ))}
       </div>
-      {error && <ErrorMessage>{error}</ErrorMessage>}
+      {actionError !== null && <ErrorMessage>{errorText(actionError)}</ErrorMessage>}
+      {loadError !== null && <ErrorMessage>{errorText(loadError)}</ErrorMessage>}
       {users === null ? (
-        !error && <Loading />
+        loadError === null && <Loading />
       ) : users.length === 0 ? (
         <p class="muted">{t("admin.empty")}</p>
       ) : (
@@ -105,7 +103,7 @@ function UserList({ me }: { me: User }) {
               </div>
               {u.id !== me.id && (
                 <div class="user-actions">
-                  {ACTIONS[u.status].map((a) => (
+                  {actionsFor(u.status).map((a) => (
                     <button
                       key={a}
                       type="button"

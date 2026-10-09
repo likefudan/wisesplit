@@ -8,7 +8,8 @@ import { googleName } from "../users";
 /**
  * Sign in as any Google identity without going through Google, so browser tests can run. Only on a
  * local site or staging, and only with TEST_LOGIN_SECRET set; production never has it, whatever
- * its secrets say (test/testLogin.test.ts checks that).
+ * its secrets say (test/testLogin.test.ts checks that). Whoever holds the secret can still sign
+ * up as an admin email, since the browser tests need an admin: keep the staging secret private.
  */
 export const testLoginEnabled = (env: Env) =>
   (env.ENVIRONMENT === "local" || env.ENVIRONMENT === "staging") && !!env.TEST_LOGIN_SECRET;
@@ -24,8 +25,9 @@ testLoginRoutes.post("/login", async (c) => {
   const email = str(body.email).trim();
   if (!/^[^@\s]+@[^@\s]+$/.test(email) || email.length > 254)
     throw new HttpError(400, "invalid_input", "email is required");
-  // The Google id is derived from the email unless given, so the same test user signs in again.
-  const sub = str(body.sub) || `test:${email.toLowerCase()}`;
+  // A Google id of its own ("test:" + email), so the same test user signs in again and a real
+  // Google account can never be signed into (or have its email rewritten) through here.
+  const sub = `test:${email.toLowerCase()}`;
   await startSession(c, { google_sub: sub, email, name: googleName(body.name, email), picture: null });
   return c.body(null, 204);
 });

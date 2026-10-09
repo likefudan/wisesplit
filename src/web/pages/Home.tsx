@@ -1,10 +1,10 @@
 import { useLocation } from "preact-iso";
 import { useState } from "preact/hooks";
 import { isMessageKey } from "../../shared/i18n";
-import { api } from "../api";
+import { ApiError, api } from "../api";
 import { ErrorMessage, Loading, Page, useErrorText } from "../components";
 import { useI18n } from "../i18n";
-import { type Session, type User, setUser, signOut, useSession } from "../session";
+import { refreshSession, type Session, type User, setUser, signOut, useSession } from "../session";
 import { Turnstile } from "../turnstile";
 
 /**
@@ -116,6 +116,8 @@ function SignupForm({ session, again }: { session: Session; again?: boolean }) {
       setError(errorText(err));
       // A Turnstile answer works only once.
       setResetKey((k) => k + 1);
+      // Signed up meanwhile (another tab, or the admin approved a rejected applicant): show where it stands.
+      if (err instanceof ApiError && err.code === "already_registered") refreshSession();
     } finally {
       setBusy(false);
     }

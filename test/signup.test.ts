@@ -10,7 +10,7 @@ function mockTurnstile() {
     expect(String(input)).toBe("https://challenges.cloudflare.com/turnstile/v0/siteverify");
     const body = init?.body as URLSearchParams;
     expect(body.get("secret")).toBe("secret-key");
-    return Response.json({ success: body.get("response") === "good" });
+    return Response.json({ success: body.get("response") === "good", hostname: "wisesplit.test" });
   });
 }
 
@@ -89,6 +89,15 @@ describe("signing up", () => {
     expect(staging.status).toBe(503);
     const local = await send("/api/auth/register", { cookie, body, env: { ENVIRONMENT: "local" } });
     expect(local.status).toBe(200);
+  });
+
+  it("refuses an answer solved on another site using the same widget", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({ success: true, hostname: "staging.wisesplit.llmat.dev" }),
+    );
+    const res = await register(await signIn(uniqueEmail()));
+    expect(res.status).toBe(400);
+    expect((await json(res)).error.code).toBe("turnstile_failed");
   });
 
   it("reports Turnstile being unreachable rather than calling the person a bot", async () => {

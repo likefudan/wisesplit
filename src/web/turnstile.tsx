@@ -72,7 +72,8 @@ export function Turnstile({
       alive = false;
       if (widget) window.turnstile?.remove(widget);
     };
-  }, [siteKey, lang, resetKey, attempt]);
+    // The widget keeps the language it was drawn in: redrawing it would throw away a solved check.
+  }, [siteKey, resetKey, attempt]);
 
   return (
     <div class="turnstile">

@@ -1,5 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
+import type { UserStatus } from "../shared/users";
 import type { Env } from "./env";
 import { HttpError, now } from "./http";
 import { randomToken, sha256 } from "./lib/crypto";
@@ -11,8 +12,6 @@ export interface SessionRow {
   name: string;
   picture: string | null;
 }
-
-export type UserStatus = "pending" | "approved" | "rejected" | "deactivated";
 
 export interface UserRow {
   id: string;

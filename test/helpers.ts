@@ -1,7 +1,7 @@
 import { exports } from "cloudflare:workers";
 import { env } from "cloudflare:workers";
 import worker from "../src/worker/index";
-import type { UserStatus } from "../src/worker/auth";
+import type { UserStatus } from "../src/shared/users";
 import type { Env } from "../src/worker/env";
 import { randomId, sha256 } from "../src/worker/lib/crypto";
 

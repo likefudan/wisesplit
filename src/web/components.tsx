@@ -6,6 +6,8 @@ import { setLang, useI18n } from "./i18n";
 import { type User, setUser, useSession } from "./session";
 import { isStaging } from "./site";
 
+let langSaves = 0;
+
 /** Every page's frame: the test-site banner, the header with the account and language switch, then the content. */
 export function Page({ title, children }: { title?: string; children: ComponentChildren }) {
   const { lang, t } = useI18n();
@@ -15,8 +17,11 @@ export function Page({ title, children }: { title?: string; children: ComponentC
     setLang(next);
     // Signed-in users keep the choice in their profile, so it follows them to other devices.
     if (user) {
+      const seq = ++langSaves;
       try {
-        setUser((await api<{ user: User }>("/api/me", { lang: next })).user);
+        const saved = (await api<{ user: User }>("/api/me", { lang: next })).user;
+        // Quick double clicks: only the last answer describes the profile as it now is.
+        if (seq === langSaves) setUser(saved);
       } catch {
         // The page has switched anyway; the profile keeps the old one until the next change.
       }

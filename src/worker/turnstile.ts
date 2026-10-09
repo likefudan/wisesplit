@@ -16,7 +16,7 @@ export async function verifyTurnstile(env: Env, token: string, ip: string | unde
     throw new HttpError(503, "turnstile_unavailable", "Sign-up is not set up yet (Turnstile keys missing)");
   }
   if (!token || token.length > 2048) throw failed();
-  let outcome: { success?: boolean };
+  let outcome: { success?: boolean; hostname?: string };
   try {
     const body = new URLSearchParams({ secret: env.TURNSTILE_SECRET_KEY!, response: token });
     if (ip) body.set("remoteip", ip);
@@ -28,6 +28,9 @@ export async function verifyTurnstile(env: Env, token: string, ip: string | unde
     throw new HttpError(503, "turnstile_unavailable", "Could not check the challenge; try again");
   }
   if (outcome.success !== true) throw failed();
+  // One widget covers staging and production; an answer only counts on the site it was solved on.
+  // (Locally, Cloudflare's test keys answer with "example.com".)
+  if (!isLocal(env) && outcome.hostname !== new URL(env.SITE_ORIGIN).hostname) throw failed();
 }
 
 const failed = () => new HttpError(400, "turnstile_failed", "The human check failed; try it again");
