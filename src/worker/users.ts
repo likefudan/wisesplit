@@ -65,8 +65,12 @@ const startOfDay = () => `${now().slice(0, 10)}T00:00:00.000Z`;
  * The caps are checked in the same statement that writes the row, so parallel sign-ups can't
  * all slip in under the limit.
  */
-export async function register(env: Env, session: SessionRow, input: { name: string; lang: Lang }): Promise<UserRow> {
-  const existing = await userByGoogle(env, session.google_sub);
+export async function register(
+  env: Env,
+  session: SessionRow,
+  existing: UserRow | null,
+  input: { name: string; lang: Lang },
+): Promise<UserRow> {
   if (existing && existing.status !== "rejected")
     throw new HttpError(409, "already_registered", "This Google account has already signed up");
   const settings = await getSettings(env);
@@ -78,18 +82,18 @@ export async function register(env: Env, session: SessionRow, input: { name: str
   const room = `(? OR ((SELECT COUNT(*) FROM users WHERE applied_at >= ?) < ?
     AND (? <> 'pending' OR (SELECT COUNT(*) FROM users WHERE status = 'pending') < ?)))`;
   const roomArgs = [admin ? 1 : 0, today, settings.dailySignupCap, status, settings.pendingCap];
-  let changes: number;
+  let saved: UserRow | null;
   try {
-    const result = existing
+    saved = existing
       ? await env.DB.prepare(
           `UPDATE users SET status = ?, name = ?, lang = ?, applied_at = ?, decided_at = NULL, decided_by = NULL
-           WHERE id = ? AND status = 'rejected' AND ${room}`,
+           WHERE id = ? AND status = 'rejected' AND ${room} RETURNING *`,
         )
           .bind(status, input.name, input.lang, at, existing.id, ...roomArgs)
-          .run()
+          .first<UserRow>()
       : await env.DB.prepare(
           `INSERT INTO users (id, google_sub, email, name, picture, lang, status, created_at, applied_at)
-           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${room}`,
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${room} RETURNING *`,
         )
           .bind(
             randomId(),
@@ -103,15 +107,14 @@ export async function register(env: Env, session: SessionRow, input: { name: str
             at,
             ...roomArgs,
           )
-          .run();
-    changes = result.meta.changes;
+          .first<UserRow>();
   } catch (err) {
     // Two tabs signing up the same account at once: the second hits the unique Google id.
     if (err instanceof Error && /UNIQUE/i.test(err.message))
       throw new HttpError(409, "already_registered", "This Google account has already signed up");
     throw err;
   }
-  if (!changes) {
+  if (!saved) {
     const current = await userByGoogle(env, session.google_sub);
     if (current && current.status !== "rejected")
       throw new HttpError(409, "already_registered", "This Google account has already signed up");
@@ -122,5 +125,5 @@ export async function register(env: Env, session: SessionRow, input: { name: str
       throw new HttpError(429, "signup_cap_reached", "Today's sign-ups are full; try again tomorrow");
     throw new HttpError(429, "pending_full", "Too many sign-ups are waiting for approval; try again later");
   }
-  return (await userByGoogle(env, session.google_sub))!;
+  return saved;
 }

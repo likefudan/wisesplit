@@ -1,15 +1,15 @@
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import { cookieOptions, currentSession, endSession, type SessionRow, startSession, userByGoogle } from "../auth";
+import { cookieOptions, endSession, type SessionRow, signedIn, startSession } from "../auth";
 import type { Env } from "../env";
-import { HttpError, now, readJson } from "../http";
-import { pkceChallenge, randomToken, sha256, timingSafeEqual } from "../lib/crypto";
+import { HttpError, readJson, str } from "../http";
+import { pkceChallenge, randomToken, timingSafeEqual } from "../lib/crypto";
 import { turnstileConfigured, verifyTurnstile } from "../turnstile";
 import { googleName, parseLang, parseName, publicUser, register } from "../users";
 import { testLoginEnabled } from "./testLogin";
 
-const STATE_COOKIE = "ws_oauth_state";
+const STATE_COOKIE = "ws_oauth";
 const STATE_MINUTES = 10;
 const googleKeys = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
 
@@ -40,8 +40,7 @@ export const authRoutes = new Hono<{ Bindings: Env }>();
 
 /** Everything the pages need to know about who is here, in one call. */
 authRoutes.get("/session", async (c) => {
-  const session = await currentSession(c);
-  const user = session ? await userByGoogle(c.env, session.google_sub) : null;
+  const { session, user } = await signedIn(c);
   return c.json({
     googleEnabled: googleEnabled(c.env),
     turnstileSiteKey: turnstileConfigured(c.env) ? c.env.TURNSTILE_SITE_KEY! : null,
@@ -51,35 +50,57 @@ authRoutes.get("/session", async (c) => {
   });
 });
 
-// Starts Google sign-in: Authorization Code with PKCE, a random state (in a cookie and, hashed, in
-// the database) and a nonce the ID token must carry back.
+/**
+ * A Google sign-in in progress, kept only in this browser's HttpOnly cookie (nothing is written to
+ * the database before Google answers): the state Google must send back, the nonce the ID token
+ * must carry, the PKCE verifier, the page to land on afterwards, and when it runs out.
+ */
+interface PendingSignIn {
+  state: string;
+  nonce: string;
+  verifier: string;
+  next: string;
+  expires: number;
+}
+
+function readPending(cookie: string | undefined): PendingSignIn | null {
+  if (!cookie) return null;
+  try {
+    const p = JSON.parse(atob(cookie.replace(/-/g, "+").replace(/_/g, "/"))) as PendingSignIn;
+    return typeof p.state === "string" &&
+      typeof p.nonce === "string" &&
+      typeof p.verifier === "string" &&
+      typeof p.next === "string" &&
+      typeof p.expires === "number" &&
+      p.expires > Date.now()
+      ? p
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+// Starts Google sign-in: Authorization Code with PKCE, a random state and a nonce.
 authRoutes.get("/google", async (c) => {
   if (!googleEnabled(c.env)) return c.redirect("/login?error=not_configured");
-  const state = randomToken();
-  const nonce = randomToken();
-  const verifier = randomToken();
-  await c.env.DB.batch([
-    c.env.DB.prepare("DELETE FROM oauth_states WHERE expires_at < ?").bind(now()),
-    c.env.DB.prepare(
-      "INSERT INTO oauth_states (id_hash, nonce, verifier, next, expires_at) VALUES (?, ?, ?, ?, ?)",
-    ).bind(
-      await sha256(state),
-      nonce,
-      verifier,
-      safeNext(c.req.query("next")),
-      new Date(Date.now() + STATE_MINUTES * 60_000).toISOString(),
-    ),
-  ]);
-  setCookie(c, STATE_COOKIE, state, { ...cookieOptions(c), maxAge: STATE_MINUTES * 60 });
+  const pending: PendingSignIn = {
+    state: randomToken(),
+    nonce: randomToken(),
+    verifier: randomToken(),
+    next: safeNext(c.req.query("next")),
+    expires: Date.now() + STATE_MINUTES * 60_000,
+  };
+  const value = btoa(JSON.stringify(pending)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  setCookie(c, STATE_COOKIE, value, { ...cookieOptions(c), maxAge: STATE_MINUTES * 60 });
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   url.search = new URLSearchParams({
     client_id: c.env.GOOGLE_CLIENT_ID!,
     redirect_uri: callbackUrl(c.env),
     response_type: "code",
     scope: "openid email profile",
-    state,
-    nonce,
-    code_challenge: await pkceChallenge(verifier),
+    state: pending.state,
+    nonce: pending.nonce,
+    code_challenge: await pkceChallenge(pending.verifier),
     code_challenge_method: "S256",
     prompt: "select_account",
   }).toString();
@@ -88,17 +109,11 @@ authRoutes.get("/google", async (c) => {
 
 authRoutes.get("/google/callback", async (c) => {
   const state = c.req.query("state") ?? "";
-  const cookie = getCookie(c, STATE_COOKIE) ?? "";
+  const saved = readPending(getCookie(c, STATE_COOKIE));
+  // Used up whatever happens next: one sign-in per visit to Google.
   deleteCookie(c, STATE_COOKIE, cookieOptions(c));
-  if (!googleEnabled(c.env) || !state || !cookie || !timingSafeEqual(state, cookie))
+  if (!googleEnabled(c.env) || !saved || !state || !timingSafeEqual(state, saved.state))
     return c.redirect("/login?error=invalid_state");
-  // Used up whatever happens next, so a callback URL can't be replayed.
-  const saved = await c.env.DB.prepare(
-    "DELETE FROM oauth_states WHERE id_hash = ? AND expires_at > ? RETURNING nonce, verifier, next",
-  )
-    .bind(await sha256(state), now())
-    .first<{ nonce: string; verifier: string; next: string }>();
-  if (!saved) return c.redirect("/login?error=invalid_state");
   if (c.req.query("error")) return c.redirect("/login?error=cancelled");
   const code = c.req.query("code");
   if (!code) return c.redirect("/login?error=failed");
@@ -152,17 +167,15 @@ authRoutes.get("/google/callback", async (c) => {
 // Sign-up, and re-applying after a rejection: the display name, the language the page is in, and
 // the Turnstile answer.
 authRoutes.post("/register", async (c) => {
-  const session = await currentSession(c);
+  const { session, user: existing } = await signedIn(c);
   if (!session) throw new HttpError(401, "login_required", "Sign in with Google first");
+  if (existing && existing.status !== "rejected")
+    throw new HttpError(409, "already_registered", "This Google account has already signed up");
   const body = await readJson(c.req.raw);
   const name = parseName(body.name);
   const lang = parseLang(body.lang);
-  await verifyTurnstile(
-    c.env,
-    typeof body.turnstileToken === "string" ? body.turnstileToken : "",
-    c.req.header("CF-Connecting-IP"),
-  );
-  const user = await register(c.env, session, { name, lang });
+  await verifyTurnstile(c.env, str(body.turnstileToken), c.req.header("CF-Connecting-IP"));
+  const user = await register(c.env, session, existing, { name, lang });
   return c.json({ user: publicUser(c.env, user) });
 });
 

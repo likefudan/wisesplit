@@ -1,4 +1,4 @@
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { LANGS, type Lang } from "../../shared/i18n";
 import { api } from "../api";
 import { Avatar, ErrorMessage, Page, useErrorText } from "../components";
@@ -17,6 +17,8 @@ function ProfileForm({ user }: { user: User }) {
   const [name, setName] = useState(user.name);
   const [venmo, setVenmo] = useState(user.venmo ?? "");
   const [lang, setFormLang] = useState<Lang>(user.lang);
+  // The header's language switch saves to the profile too; follow it so Save doesn't undo it.
+  useEffect(() => setFormLang(user.lang), [user.lang]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: true } | { ok: false; error: unknown } | null>(null);
 

@@ -206,8 +206,22 @@ describe("what each kind of account may do", () => {
     expect((await send("/api/me", { cookie: user.cookie })).status).toBe(401);
   });
 
-  it("an admin email only counts once its user is approved", async () => {
-    const res = await send("/api/auth/session", { cookie: await signIn(ADMIN_EMAIL) });
-    expect((await json(res)).user?.isAdmin ?? false).toBe(false);
+  it("an admin email only counts once it has signed up", async () => {
+    const res = await send("/api/auth/session", { cookie: await signIn(ADMIN_EMAIL, "sub-not-signed-up") });
+    expect((await json(res)).user).toBeNull();
+  });
+
+  it("approves an admin who applied before being named admin, so the site can't lock them out", async () => {
+    for (const status of ["pending", "rejected"] as const) {
+      const late = await makeUser(status);
+      const before = await send("/api/me", { cookie: late.cookie });
+      expect(before.status).toBe(403);
+      const res = await send("/api/auth/session", { cookie: late.cookie, env: { ADMIN_EMAILS: late.email } });
+      expect((await json(res)).user).toMatchObject({ status: "approved", isAdmin: true });
+    }
+    // Deactivation is the admin's own decision and stands.
+    const off = await makeUser("deactivated");
+    const res = await send("/api/me", { cookie: off.cookie, env: { ADMIN_EMAILS: off.email } });
+    expect(res.status).toBe(403);
   });
 });

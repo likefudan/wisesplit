@@ -69,7 +69,7 @@ describe("Google sign-in", () => {
     expect(url.searchParams.get("nonce")).toBeTruthy();
     expect(url.searchParams.get("redirect_uri")).toBe(`${ORIGIN}/api/auth/google/callback`);
     expect(url.searchParams.get("client_secret")).toBeNull();
-    expect(cookie).toMatch(/^ws_oauth_state=/);
+    expect(cookie).toMatch(/^ws_oauth=/);
   });
 
   it("says so when Google sign-in is not set up", async () => {
@@ -78,8 +78,8 @@ describe("Google sign-in", () => {
     expect(await json(await send("/api/auth/session"))).toMatchObject({ googleEnabled: false });
   });
 
-  it("checks the ID token and signs the browser in with an HttpOnly, Secure, Lax cookie; the callback can't be replayed", async () => {
-    const { response, cookie, start } = await login();
+  it("checks the ID token and signs the browser in with an HttpOnly, Secure, Lax cookie", async () => {
+    const { response, cookie } = await login();
     expect(response.status).toBe(302);
     expect(response.headers.get("Location")).toBe("/");
     const setCookie = response.headers.get("Set-Cookie")!;
@@ -92,8 +92,22 @@ describe("Google sign-in", () => {
       identity: { email: "alice@gmail.com", name: "Alice Liddell" },
       user: null,
     });
-    const replay = await get(`/api/auth/google/callback?state=${start.state}&code=valid-code`, start.cookie);
-    expect(replay.headers.get("Location")).toBe("/login?error=invalid_state");
+    // The sign-in in progress is used up.
+    expect(response.headers.getSetCookie().some((h) => /^ws_oauth=;/.test(h))).toBe(true);
+  });
+
+  it("refuses a sign-in in progress that has run out or was tampered with", async () => {
+    const start = await begin();
+    const value = start.cookie.slice("ws_oauth=".length);
+    const pending = JSON.parse(atob(value.replace(/-/g, "+").replace(/_/g, "/")));
+    for (const cookie of [
+      `ws_oauth=${btoa(JSON.stringify({ ...pending, expires: Date.now() - 1 }))}`,
+      "ws_oauth=not-json",
+      "",
+    ]) {
+      const res = await get(`/api/auth/google/callback?state=${start.state}&code=c`, cookie);
+      expect(res.headers.get("Location")).toBe("/login?error=invalid_state");
+    }
   });
 
   it("comes back to the page the sign-in started from, on this site only", async () => {

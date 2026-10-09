@@ -28,6 +28,7 @@ function UserList({ me }: { me: User }) {
   const { query, route } = useLocation();
   const tab = TABS.includes(query.status as UserStatus) ? (query.status as UserStatus) : "pending";
   const [users, setUsers] = useState<Listed[] | null>(null);
+  const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
@@ -36,8 +37,12 @@ function UserList({ me }: { me: User }) {
     let alive = true;
     setUsers(null);
     setError("");
-    api<{ users: Listed[] }>(`/api/admin/users?status=${tab}`)
-      .then((r) => alive && setUsers(r.users))
+    api<{ users: Listed[]; truncated: boolean }>(`/api/admin/users?status=${tab}`)
+      .then((r) => {
+        if (!alive) return;
+        setUsers(r.users);
+        setTruncated(r.truncated);
+      })
       .catch((e) => alive && setError(errorText(e)));
     return () => {
       alive = false;
@@ -117,6 +122,7 @@ function UserList({ me }: { me: User }) {
           ))}
         </ul>
       )}
+      {users && truncated && <p class="muted small">{t("admin.truncated", { count: users.length })}</p>}
     </Page>
   );
 }

@@ -83,13 +83,38 @@ export async function endSession<E extends { Bindings: Env }>(c: Context<E>): Pr
   deleteCookie(c, SESSION_COOKIE, cookieOptions(c));
 }
 
-/** The Google identity this browser is signed in as, or null. */
-export async function currentSession<E extends { Bindings: Env }>(c: Context<E>): Promise<SessionRow | null> {
+/**
+ * Who this browser is, in one query: its Google identity (null when signed out) and the user that
+ * identity signed up as (null before signing up).
+ *
+ * An admin whose application is still pending or was rejected (they signed up before their email
+ * was added to ADMIN_EMAILS) is approved here, so the admin can never be locked out.
+ */
+export async function signedIn<E extends { Bindings: Env }>(
+  c: Context<E>,
+): Promise<{ session: SessionRow | null; user: UserRow | null }> {
   const raw = getCookie(c, SESSION_COOKIE);
-  if (!raw) return null;
-  return c.env.DB.prepare("SELECT google_sub, email, name, picture FROM sessions WHERE id_hash = ? AND expires_at > ?")
+  if (!raw) return { session: null, user: null };
+  const row = await c.env.DB.prepare(
+    `SELECT s.google_sub AS s_sub, s.email AS s_email, s.name AS s_name, s.picture AS s_picture, u.*
+     FROM sessions s LEFT JOIN users u ON u.google_sub = s.google_sub
+     WHERE s.id_hash = ? AND s.expires_at > ?`,
+  )
     .bind(await sha256(raw), now())
-    .first<SessionRow>();
+    .first<UserRow & { s_sub: string; s_email: string; s_name: string; s_picture: string | null }>();
+  if (!row) return { session: null, user: null };
+  const { s_sub, s_email, s_name, s_picture, ...user } = row;
+  const session = { google_sub: s_sub, email: s_email, name: s_name, picture: s_picture };
+  if (!user.id) return { session, user: null };
+  if ((user.status === "pending" || user.status === "rejected") && isAdminEmail(c.env, user.email)) {
+    const promoted = await c.env.DB.prepare(
+      "UPDATE users SET status = 'approved', decided_at = ? WHERE id = ? AND status IN ('pending', 'rejected') RETURNING *",
+    )
+      .bind(now(), user.id)
+      .first<UserRow>();
+    return { session, user: promoted ?? (await userByGoogle(c.env, s_sub)) };
+  }
+  return { session, user };
 }
 
 export const userByGoogle = (env: Env, sub: string) =>
@@ -117,9 +142,8 @@ const notApproved: Record<Exclude<UserStatus, "approved">, () => HttpError> = {
 
 /** Guard for everything a member does: signed in, applied, and approved. Sets `c.get("user")`. */
 export const requireApproved: MiddlewareHandler<AppEnv> = async (c, next) => {
-  const session = await currentSession(c);
+  const { session, user } = await signedIn(c);
   if (!session) throw new HttpError(401, "login_required", "Sign in with Google first");
-  const user = await userByGoogle(c.env, session.google_sub);
   if (!user) throw new HttpError(403, "signup_required", "Finish signing up first");
   if (user.status !== "approved") throw notApproved[user.status]();
   c.set("user", user);

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { type AppEnv, requireApproved, userByGoogle } from "../auth";
+import { type AppEnv, requireApproved, type UserRow } from "../auth";
 import { readJson } from "../http";
 import { parseLang, parseName, parseVenmo, publicUser } from "../users";
 
@@ -16,8 +16,8 @@ meRoutes.post("/", async (c) => {
   const name = "name" in body ? parseName(body.name) : user.name;
   const venmo = "venmo" in body ? parseVenmo(body.venmo) : user.venmo;
   const lang = "lang" in body ? parseLang(body.lang) : user.lang;
-  await c.env.DB.prepare("UPDATE users SET name = ?, venmo = ?, lang = ? WHERE id = ?")
+  const saved = await c.env.DB.prepare("UPDATE users SET name = ?, venmo = ?, lang = ? WHERE id = ? RETURNING *")
     .bind(name, venmo, lang, user.id)
-    .run();
-  return c.json({ user: publicUser(c.env, (await userByGoogle(c.env, user.google_sub))!) });
+    .first<UserRow>();
+  return c.json({ user: publicUser(c.env, saved!) });
 });

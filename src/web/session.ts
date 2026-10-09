@@ -64,8 +64,13 @@ export function useSession(): SessionState {
   return state;
 }
 
+/** Signs out and goes to the front page (which still shows the account if the server could not be reached). */
 export async function signOut(): Promise<void> {
-  await api("/api/auth/logout", {});
+  try {
+    await api("/api/auth/logout", {});
+  } catch {
+    // Nothing more to do here; the front page shows where things stand.
+  }
   window.location.assign("/");
 }
 

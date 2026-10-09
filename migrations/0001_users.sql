@@ -32,16 +32,6 @@ CREATE TABLE sessions (
 );
 CREATE INDEX sessions_expires_at ON sessions (expires_at);
 
--- A Google sign-in in progress (10 minutes): state (hashed), nonce, PKCE verifier, and the page
--- of this site to land on afterwards.
-CREATE TABLE oauth_states (
-  id_hash TEXT PRIMARY KEY,
-  nonce TEXT NOT NULL,
-  verifier TEXT NOT NULL,
-  next TEXT NOT NULL,
-  expires_at TEXT NOT NULL
-);
-
 -- Site-wide settings the admin can change (see src/worker/settings.ts for keys and defaults).
 CREATE TABLE settings (
   key TEXT PRIMARY KEY,

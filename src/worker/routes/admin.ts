@@ -19,10 +19,14 @@ adminRoutes.get("/users", async (c) => {
     throw new HttpError(400, "invalid_input", `status must be one of ${STATUSES.join(", ")}`);
   const order = status === "pending" ? "applied_at ASC" : "applied_at DESC";
   const { results } = await c.env.DB.prepare(`SELECT * FROM users WHERE status = ? ORDER BY ${order} LIMIT ?`)
-    .bind(status, LIST_LIMIT)
+    .bind(status, LIST_LIMIT + 1)
     .all<UserRow>();
   return c.json({
-    users: results.map((u) => ({ ...publicUser(c.env, u), appliedAt: u.applied_at, decidedAt: u.decided_at })),
+    users: results
+      .slice(0, LIST_LIMIT)
+      .map((u) => ({ ...publicUser(c.env, u), appliedAt: u.applied_at, decidedAt: u.decided_at })),
+    // More than the page shows; plenty for a circle of friends, but say so rather than hide anyone.
+    truncated: results.length > LIST_LIMIT,
   });
 });
 
