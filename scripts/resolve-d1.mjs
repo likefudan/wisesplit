@@ -22,7 +22,11 @@ let db = find();
 if (!db) {
   console.log(`Creating D1 database ${NAME}`);
   wrangler("d1", "create", NAME);
-  db = find();
+  // The list can lag a moment behind the create.
+  for (let attempt = 0; attempt < 6 && !db; attempt++) {
+    if (attempt) await new Promise((r) => setTimeout(r, 5_000));
+    db = find();
+  }
 }
 if (!db) throw new Error(`D1 database ${NAME} not found after create`);
 

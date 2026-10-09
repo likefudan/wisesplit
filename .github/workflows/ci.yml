@@ -4,7 +4,7 @@ name: CI
 # Merge to main: checks, then deploy to the test site (staging.wisesplit.llmat.dev).
 # Push a release tag v* (e.g. v2026.10.09): checks, back up the database, deploy to production.
 # Run workflow by hand: on main → redeploys staging; on a v* tag → redeploys that release to
-#   production (this is also how to roll back: run it on the previous tag).
+#   production (a code rollback; migrations are not undone, see README "Deploying").
 on:
   pull_request:
   push:
@@ -49,6 +49,8 @@ jobs:
       - name: Playwright version
         id: pw
         run: echo "version=$(node -p 'require("@playwright/test/package.json").version')" >> "$GITHUB_OUTPUT"
+      # A cached browser needs no system packages: the runner image already has Chromium's
+      # libraries. A cache miss (new Playwright version) installs both, so it never depends on that.
       - uses: actions/cache@v6
         id: pw-cache
         with:
