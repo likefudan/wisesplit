@@ -37,7 +37,7 @@ Every string on the pages comes from `src/shared/i18n.ts`, which holds an Englis
 `.github/workflows/ci.yml` runs lint, typecheck, unit tests and browser tests on every pull request.
 
 - **Merge to `main`** → the same checks, then deploy to staging (migrate its D1 database, deploy the `wisesplit-staging` Worker, smoke test it).
-- **Release** → Actions → *Release* → *Run workflow* on `main` tags it `vYYYY.MM.DD` and deploys production after backing up its database. Running CI by hand on an older tag rolls production back to it.
+- **Release** → Actions → *Release* → *Run workflow* on `main` tags it `vYYYY.MM.DD` and deploys production after backing up its database. Running CI by hand on an older tag redeploys that version's code. It cannot undo database migrations, so only roll back to a tag that already has every migration in `migrations/` (otherwise restore the backup the release made, from that run's artifacts).
 
 Each environment has its own Worker, D1 database and custom domain (`wrangler.jsonc`). CI finds the database by name, creating it on first deploy, and writes its id into `wrangler.jsonc` in place of the placeholder (`scripts/resolve-d1.mjs`).
 

@@ -24,5 +24,6 @@ describe("skeleton", () => {
   it("lets search engines index the real site but not the API", async () => {
     const res = await call("/robots.txt");
     expect(await res.text()).toBe("User-agent: *\nDisallow: /api/\n");
+    expect(res.headers.get("Cache-Control")).toBeNull();
   });
 });

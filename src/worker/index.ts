@@ -7,8 +7,8 @@ const app = new Hono<{ Bindings: Env }>();
 
 app.use("*", async (c, next) => {
   await next();
-  // API answers are per user; keep them out of caches.
-  c.header("Cache-Control", "no-store");
+  // API answers will be per user; keep them out of caches.
+  if (c.req.path.startsWith("/api/")) c.header("Cache-Control", "no-store");
   // Same as public/_headers, which covers the static pages.
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) c.header(name, value);
   if (isStaging(c.env)) c.header("X-Robots-Tag", "noindex, nofollow");

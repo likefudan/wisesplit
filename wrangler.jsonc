@@ -23,17 +23,12 @@
   "routes": [{ "pattern": "wisesplit.llmat.dev", "custom_domain": true }],
   "observability": { "enabled": true },
 
-  // Test site: its own Worker, database and domain. Every merge to main lands here;
-  // production only changes when a v* release tag is pushed (see .github/workflows/ci.yml).
+  // Test site: its own Worker, database and domain; assets and observability are inherited from above.
+  // Every merge to main lands here; production only changes when a v* release tag is pushed
+  // (see .github/workflows/ci.yml).
   "env": {
     "staging": {
       "name": "wisesplit-staging",
-      "assets": {
-        "directory": "./dist/web",
-        "binding": "ASSETS",
-        "not_found_handling": "single-page-application",
-        "run_worker_first": ["/api/*", "/robots.txt"]
-      },
       "d1_databases": [
         {
           "binding": "DB",
@@ -44,8 +39,7 @@
         }
       ],
       "vars": { "SITE_ORIGIN": "https://staging.wisesplit.llmat.dev", "ENVIRONMENT": "staging" },
-      "routes": [{ "pattern": "staging.wisesplit.llmat.dev", "custom_domain": true }],
-      "observability": { "enabled": true }
+      "routes": [{ "pattern": "staging.wisesplit.llmat.dev", "custom_domain": true }]
     }
   }
 }
