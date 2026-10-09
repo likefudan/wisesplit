@@ -2,7 +2,7 @@
 
 A Splitwise-like site for splitting expenses with friends: no ads, no limits. Runs on Cloudflare's free tier.
 
-- **Production**: https://wisesplit.llmat.dev (goes live at the launch PR)
+- **Production**: https://wisesplit.llmat.dev (goes live with the first Release run; planned for the launch PR)
 - **Staging**: https://staging.wisesplit.llmat.dev (yellow "test site" banner; its own data)
 
 What it will do: [docs/mvp-scope.md](docs/mvp-scope.md). How it is being built, PR by PR: [docs/pr-plan.md](docs/pr-plan.md).
