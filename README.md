@@ -28,6 +28,23 @@ npm run test:e2e     # browser tests against a throwaway local Worker on port 87
 
 The local database lives under `.wrangler/`; `npm run db:migrate:local` applies new migrations to it.
 
+Copy `.dev.vars.example` to `.dev.vars` first: it makes the local site a "local" one (sign-up works without Turnstile), names you as admin, and turns on the test login, so you can sign in without Google:
+
+```sh
+curl -i -X POST http://localhost:8787/api/test/login -H 'Origin: http://localhost:8787' \
+  -H 'X-Test-Login-Secret: local-secret' -H 'Content-Type: application/json' -d '{"email":"you@gmail.com"}'
+```
+
+(For a browser, real Google sign-in is easier: add your OAuth client to `.dev.vars` as described there.)
+
+### Accounts
+
+- Sign-in is Google only (`src/worker/routes/auth.ts`: Authorization Code + PKCE, ID token checked with jose). The session cookie is HttpOnly and SameSite=Lax; every API write must carry this site's `Origin`.
+- A Google account then signs up (display name + Turnstile) and waits on the admin's pending list, unless the admin has turned off *New sign-ups require approval* in `/admin/settings`. The daily sign-up cap and the pending-list cap are set there too. Rejected applicants may apply again at once.
+- Admins are the Google emails in the `ADMIN_EMAILS` secret. Their own sign-up is approved at once.
+- API routes for members use `requireApproved` from `src/worker/auth.ts` (`c.get("user")` is the user); admin routes use `requireAdmin`.
+- `POST /api/test/login` signs in without Google for the browser tests. It works only when `ENVIRONMENT` is `local` or `staging` and `TEST_LOGIN_SECRET` is set; production never has it (a unit test and the post-deploy smoke test check).
+
 ### Languages
 
 Every string on the pages comes from `src/shared/i18n.ts`, which holds an English and a Chinese table with the same keys. Add both when adding a message; the type checker catches a missing Chinese entry and `test/i18n.test.ts` checks the `{placeholders}` match. The chosen language is remembered in the browser; a first visit follows the browser's preferred language.
@@ -50,6 +67,15 @@ In the GitHub repository's *Settings → Secrets and variables → Actions*, add
 | `CLOUDFLARE_ACCOUNT_ID` | The Cloudflare account that owns the `llmat.dev` zone |
 | `CLOUDFLARE_API_TOKEN` | An API token with *Account: Workers Scripts: Edit*, *Account: D1: Edit*, *Zone (llmat.dev): Workers Routes: Edit* and *Zone (llmat.dev): DNS: Edit* |
 
-The same token jaysbadminton uses works if it already has those permissions. The `staging.wisesplit.llmat.dev` and `wisesplit.llmat.dev` DNS records and certificates are created by `wrangler deploy` (custom domains); nothing needs to be added by hand.
+For sign-in (each deploy copies these onto the Worker as secrets; one left unset keeps whatever the Worker has):
 
-Later PRs add more secrets (Google sign-in, Turnstile, Resend, Web Push keys); each lists what it needs.
+| Secret | What it is |
+| --- | --- |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | A Google OAuth *Web application* client (Google Cloud console → Google Auth Platform → Clients; scopes `openid email profile`). Authorized redirect URIs: `https://wisesplit.llmat.dev/api/auth/google/callback` and `https://staging.wisesplit.llmat.dev/api/auth/google/callback` (plus `http://localhost:8787/api/auth/google/callback` for local use). The jaysbadminton client can be reused by adding these URIs. |
+| `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | A Cloudflare Turnstile widget (dashboard → Turnstile → Add widget, mode *Managed*) with hostnames `wisesplit.llmat.dev` and `staging.wisesplit.llmat.dev`. Without them the sites refuse sign-ups. |
+| `ADMIN_EMAILS` | The admin's Google email (comma-separate several). |
+| `TEST_LOGIN_SECRET_STAGING` | Optional: any long random string, to use the test login on staging. Never sent to production. |
+
+The same Cloudflare token jaysbadminton uses works if it already has those permissions. The `staging.wisesplit.llmat.dev` and `wisesplit.llmat.dev` DNS records and certificates are created by `wrangler deploy` (custom domains); nothing needs to be added by hand.
+
+Later PRs add more secrets (Resend, Web Push keys); each lists what it needs.

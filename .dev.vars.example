@@ -1,0 +1,20 @@
+# Copy to .dev.vars (ignored by git) for `npm run dev`. Restart wrangler after editing.
+
+# A local site: sign-up works without Turnstile, and the test login below may be used.
+ENVIRONMENT="local"
+SITE_ORIGIN="http://localhost:8787"
+
+# Your Google email, so you can approve sign-ups at /admin (comma-separate several).
+ADMIN_EMAILS="you@gmail.com"
+
+# Sign in without Google: POST /api/test/login with header X-Test-Login-Secret and {"email": "..."}.
+TEST_LOGIN_SECRET="local-secret"
+
+# Optional: real Google sign-in. Add http://localhost:8787/api/auth/google/callback to the
+# OAuth client's redirect URIs and open the site as http://localhost:8787 (not 127.0.0.1).
+# GOOGLE_CLIENT_ID="...apps.googleusercontent.com"
+# GOOGLE_CLIENT_SECRET="..."
+
+# Optional: Turnstile. Cloudflare's always-passing test keys work locally:
+# TURNSTILE_SITE_KEY="1x00000000000000000000AA"
+# TURNSTILE_SECRET_KEY="1x0000000000000000000000000000000AA"

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "preact/hooks";
 import { detectLang, isLang, type Lang, type MessageKey, translate } from "../shared/i18n";
 
-// The chosen language lives in this browser for now; once people sign in it moves to their profile.
+// The chosen language is kept in this browser, and in the profile of a signed-in user
+// (src/web/session.ts applies the profile's on load; the language switch saves to it).
 const KEY = "lang";
 
 function stored(): Lang | null {
@@ -21,6 +22,8 @@ function apply(lang: Lang) {
   document.title = translate(lang, "app.name");
 }
 apply(current);
+
+export const currentLang = () => current;
 
 export function setLang(lang: Lang) {
   current = lang;

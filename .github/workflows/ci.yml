@@ -90,6 +90,15 @@ jobs:
       - run: node scripts/resolve-d1.mjs staging
       - run: npx wrangler d1 migrations apply DB --remote --env staging
       - run: npx wrangler deploy --env staging
+      - name: Copy secrets to the test site
+        run: node scripts/sync-secrets.mjs staging
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
+          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+          ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
+          TEST_LOGIN_SECRET: ${{ secrets.TEST_LOGIN_SECRET_STAGING }}
       - name: Smoke test the test site
         run: node scripts/smoke.mjs
         env:
@@ -132,5 +141,13 @@ jobs:
           retention-days: 90
       - run: npx wrangler d1 migrations apply DB --remote
       - run: npx wrangler deploy
+      - name: Copy secrets to the live site
+        run: node scripts/sync-secrets.mjs production
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
+          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+          ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
       - name: Smoke test the live site
         run: node scripts/smoke.mjs

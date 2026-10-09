@@ -2,6 +2,10 @@ import { Hono } from "hono";
 import { SECURITY_HEADERS } from "../shared/security";
 import { type Env, isStaging } from "./env";
 import { HttpError } from "./http";
+import { adminRoutes } from "./routes/admin";
+import { authRoutes } from "./routes/auth";
+import { meRoutes } from "./routes/me";
+import { testLoginRoutes } from "./routes/testLogin";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -13,6 +17,21 @@ app.use("*", async (c, next) => {
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) c.header(name, value);
   if (isStaging(c.env)) c.header("X-Robots-Tag", "noindex, nofollow");
 });
+
+// The session cookie is SameSite=Lax, which still lets another site's page post a form here. So
+// every API write must come from this site's own pages, as the browser's Origin header shows.
+// (Violation reports are the exception: browsers send them without one.)
+app.use("/api/*", async (c, next) => {
+  const write = c.req.method !== "GET" && c.req.method !== "HEAD";
+  if (write && c.req.path !== "/api/csp-report" && c.req.header("Origin") !== new URL(c.req.url).origin)
+    throw new HttpError(403, "csrf", "Request did not come from this site; reload the page and try again");
+  await next();
+});
+
+app.route("/api/auth", authRoutes);
+app.route("/api/me", meRoutes);
+app.route("/api/admin", adminRoutes);
+app.route("/api/test", testLoginRoutes);
 
 // Proves the Worker is up and can reach its database.
 app.get("/api/health", async (c) => {
