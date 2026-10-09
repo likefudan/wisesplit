@@ -1,0 +1,77 @@
+name: Release
+
+# One-click release: Actions → Release → Run workflow (on main). Tags the latest main as vYYYY.MM.DD
+# (Pacific date; .2, .3 … for later releases the same day), publishes a GitHub release with the
+# merged PRs as notes, then starts CI on that tag, which backs up the database and deploys
+# production (see ci.yml). Only a commit whose CI on main is green can be released.
+#
+# The tag and release are created with this workflow's token, which does not fire the usual
+# tag-push run, so the last step starts that run itself.
+on:
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: "Release notes (Markdown, optional; the merged PRs are always listed after them)"
+        type: string
+        required: false
+
+permissions:
+  contents: write # tag + release
+  actions: write # start ci.yml on the tag
+
+concurrency: release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Only from main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Run Release on main (it was run on ${GITHUB_REF_NAME})"
+          exit 1
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: main must be green and not released yet
+        run: |
+          state=$(gh run list --workflow ci.yml --commit "$GITHUB_SHA" --json conclusion,headBranch \
+            --jq '[.[] | select(.headBranch == "main" and .conclusion != "")][0].conclusion')
+          if [ "$state" != "success" ]; then
+            echo "::error::CI on main for ${GITHUB_SHA:0:7} is not green (${state:-no finished run}); wait for it or fix it first"
+            exit 1
+          fi
+          already=$(git tag --points-at "$GITHUB_SHA" 'v*' | head -1)
+          if [ -n "$already" ]; then
+            echo "::error::${GITHUB_SHA:0:7} is already released as $already. To redeploy it, run CI on that tag."
+            exit 1
+          fi
+      - name: Pick the version
+        id: version
+        run: |
+          day=$(TZ=America/Los_Angeles date +%Y.%m.%d)
+          tag="v$day"
+          n=1
+          while git rev-parse -q --verify "refs/tags/$tag" > /dev/null; do
+            n=$((n + 1))
+            tag="v$day.$n"
+          done
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Tag and publish the release
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          NOTES: ${{ inputs.notes }}
+        run: gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --notes "$NOTES" --generate-notes
+      - name: Deploy it to production
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh workflow run ci.yml --ref "$TAG"
+          {
+            echo "### Released $TAG"
+            echo
+            echo "- Release: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
+            echo "- Production deploy: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/ci.yml (the run on $TAG)"
+          } >> "$GITHUB_STEP_SUMMARY"

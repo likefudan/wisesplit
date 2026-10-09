@@ -1,0 +1,134 @@
+name: CI
+
+# Pull requests: checks only.
+# Merge to main: checks, then deploy to the test site (staging.wisesplit.llmat.dev).
+# Push a release tag v* (e.g. v2026.10.09): checks, back up the database, deploy to production.
+# Run workflow by hand: on main → redeploys staging; on a v* tag → redeploys that release to
+#   production (this is also how to roll back: run it on the previous tag).
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+# Read-only token: nothing here writes to the repository (deploys use the Cloudflare token).
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Unit tests and the browser tests run side by side; deploys wait for both.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      # The runner has 2 CPUs, so Vitest would default to one worker and run the files one by one.
+      - run: npm test -- --maxWorkers=2
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Playwright version
+        id: pw
+        run: echo "version=$(node -p 'require("@playwright/test/package.json").version')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+      - if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+      - name: Browser tests on a local Worker
+        run: npx playwright test
+        env:
+          WRANGLER_SEND_METRICS: "false"
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+  deploy-staging:
+    needs: [check, e2e]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    concurrency: deploy-staging
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: node scripts/resolve-d1.mjs staging
+      - run: npx wrangler d1 migrations apply DB --remote --env staging
+      - run: npx wrangler deploy --env staging
+      - name: Smoke test the test site
+        run: node scripts/smoke.mjs
+        env:
+          SITE_ORIGIN: https://staging.wisesplit.llmat.dev
+
+  deploy-production:
+    needs: [check, e2e]
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    concurrency: deploy-production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Release must be a commit on main
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "::error::${GITHUB_REF_NAME} is not on main; only merged, tested code is released"
+            exit 1
+          }
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: node scripts/resolve-d1.mjs production
+      - name: Back up the production database
+        run: |
+          mkdir -p backup
+          npx wrangler d1 export DB --remote --output "backup/wisesplit-${GITHUB_REF_NAME}-$(date -u +%Y%m%dT%H%M%SZ).sql"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: db-backup-${{ github.ref_name }}-${{ github.run_attempt }}
+          path: backup/
+          retention-days: 90
+      - run: npx wrangler d1 migrations apply DB --remote
+      - run: npx wrangler deploy
+      - name: Smoke test the live site
+        run: node scripts/smoke.mjs

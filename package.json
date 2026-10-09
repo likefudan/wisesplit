@@ -1,0 +1,33 @@
+{
+  "name": "wisesplit",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build && wrangler dev",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run",
+    "test:e2e": "vite build && playwright test",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "lint": "biome check .",
+    "format": "biome check --write ."
+  },
+  "dependencies": {
+    "hono": "^4.13.12",
+    "preact": "^11.0.0",
+    "preact-iso": "^2.12.2"
+  },
+  "devDependencies": {
+    "@babel/core": "^8.0.6",
+    "@biomejs/biome": "2.5.15",
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@cloudflare/workers-types": "^5.20261001.1",
+    "@playwright/test": "^1.63.0",
+    "@preact/preset-vite": "^2.10.6",
+    "preact-render-to-string": "^6.8.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.145.0"
+  }
+}
