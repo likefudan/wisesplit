@@ -20,9 +20,6 @@ app.get("/api/health", async (c) => {
   return c.json({ ok: true });
 });
 
-// What every page needs before anything else: whether this is the test site.
-app.get("/api/site", (c) => c.json({ staging: isStaging(c.env) }));
-
 // Browsers report what the content policy would have blocked; read them in the Worker logs.
 app.post("/api/csp-report", async (c) => {
   // Anyone can post here, so only the start of a report is read and logged.

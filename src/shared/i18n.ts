@@ -14,7 +14,6 @@ const en = {
   "home.hello": "Hello!",
   "home.comingSoon": "wisesplit is being built. Groups, expenses and settling up are on the way.",
   "lang.switch": "中文",
-  "lang.switchLabel": "Switch the language to Chinese",
   "staging.banner": "Test site: data here is not real and may be wiped.",
   "notFound.title": "Page not found",
   "notFound.body": "The link may be wrong or out of date.",
@@ -33,7 +32,6 @@ const zh: Record<MessageKey, string> = {
   "home.hello": "你好！",
   "home.comingSoon": "wisesplit 正在建设中，群组、记账和结算功能马上就来。",
   "lang.switch": "English",
-  "lang.switchLabel": "把界面语言切换成英文",
   "staging.banner": "测试网站：这里的数据不是真的，随时可能清空。",
   "notFound.title": "页面不存在",
   "notFound.body": "链接可能有误或已失效。",
@@ -62,5 +60,7 @@ export function detectLang(preferred: readonly string[]): Lang {
 export function translate(lang: Lang, key: MessageKey, params?: Record<string, string | number>): string {
   const text = MESSAGES[lang][key];
   if (!params) return text;
-  return text.replace(/\{(\w+)\}/g, (whole, name: string) => (name in params ? String(params[name]) : whole));
+  return text.replace(/\{(\w+)\}/g, (whole, name: string) =>
+    Object.hasOwn(params, name) ? String(params[name]) : whole,
+  );
 }

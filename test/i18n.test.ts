@@ -23,6 +23,7 @@ describe("i18n", () => {
     expect(translate("zh", "error.unknown", { status: 502 })).toBe("请求失败（502）。");
     expect(translate("en", "error.unknown")).toBe("Request failed ({status}).");
     expect(translate("en", "error.unknown", { other: 1 })).toBe("Request failed ({status}).");
+    expect(translate("en", "error.unknown", { toString: 1 })).toBe("Request failed ({status}).");
   });
 
   it("picks the browser's first preferred language it knows, English otherwise", () => {
