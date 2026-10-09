@@ -1,0 +1,23 @@
+# Monthly dependency updates, grouped so each month brings one PR per ecosystem.
+# CI runs on every PR; merge it when green.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    ignore:
+      # @cloudflare/vitest-pool-workers only supports vitest 4; lift this once it supports 5.
+      - dependency-name: vitest
+        update-types: ["version-update:semver-major"]
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
