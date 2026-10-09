@@ -8,13 +8,13 @@ test("home page says hello in the browser's language", async ({ page }) => {
 
 test("the language switch changes the page and is remembered after a reload", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Switch the language to Chinese" }).click();
+  await page.getByRole("button", { name: "中文" }).click();
   await expect(page.getByRole("heading", { name: "你好！" })).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
 
   await page.reload();
   await expect(page.getByRole("heading", { name: "你好！" })).toBeVisible();
-  await page.getByRole("button", { name: "把界面语言切换成英文" }).click();
+  await page.getByRole("button", { name: "English" }).click();
   await expect(page.getByRole("heading", { name: "Hello!" })).toBeVisible();
 });
 

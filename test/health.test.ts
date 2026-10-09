@@ -9,9 +9,8 @@ describe("skeleton", () => {
     expect(res.headers.get("Cache-Control")).toBe("no-store");
   });
 
-  it("says this is not the test site (tests read the production config)", async () => {
-    const res = await call("/api/site");
-    expect(await res.json()).toEqual({ staging: false });
+  it("is not marked as the test site (tests read the production config)", async () => {
+    const res = await call("/api/health");
     expect(res.headers.get("X-Robots-Tag")).toBeNull();
   });
 

@@ -10,7 +10,11 @@ const checks = [
     (r, body) => r.status === 200 && body.includes('<div id="app">') && r.headers.get("x-frame-options") === "DENY",
   ],
   ["health", "/api/health", (r, body) => r.status === 200 && JSON.parse(body).ok === true],
-  ["site info", "/api/site", (r, body) => r.status === 200 && JSON.parse(body).staging === staging],
+  [
+    "robots.txt",
+    "/robots.txt",
+    (r, body) => r.status === 200 && body.includes(staging ? "Disallow: /\n" : "Disallow: /api/"),
+  ],
   ["unknown API path", "/api/not-a-real-path", (r) => r.status === 404],
 ];
 
