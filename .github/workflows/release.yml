@@ -38,7 +38,7 @@ jobs:
       - name: main must be green and not released yet
         run: |
           state=$(gh run list --workflow ci.yml --commit "$GITHUB_SHA" --json conclusion,headBranch \
-            --jq '[.[] | select(.headBranch == "main" and .conclusion != "")][0].conclusion')
+            --jq '[.[] | select(.headBranch == "main" and .conclusion != "")][0].conclusion // empty')
           if [ "$state" != "success" ]; then
             echo "::error::CI on main for ${GITHUB_SHA:0:7} is not green (${state:-no finished run}); wait for it or fix it first"
             exit 1

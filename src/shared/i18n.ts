@@ -46,7 +46,7 @@ export const MESSAGES: Record<Lang, Record<MessageKey, string>> = { en, zh };
 
 export const isLang = (v: unknown): v is Lang => typeof v === "string" && (LANGS as readonly string[]).includes(v);
 
-/** The language for a browser that has not picked one: Chinese if it prefers any Chinese, else English. */
+/** The language for a browser that has not picked one: the first of its preferred languages we have, else English. */
 export function detectLang(preferred: readonly string[]): Lang {
   for (const tag of preferred) {
     const base = tag.toLowerCase().split("-")[0];
