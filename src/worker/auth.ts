@@ -149,7 +149,7 @@ export const isAdmin = (env: Env, user: Pick<UserRow, "email" | "status">) =>
   user.status === "approved" && isAdminEmail(env, user.email);
 
 /** Why a signed-in Google identity may not use the site yet, by the state of its application. */
-const notApproved: Record<Exclude<UserStatus, "approved">, () => HttpError> = {
+export const notApproved: Record<Exclude<UserStatus, "approved">, () => HttpError> = {
   pending: () => new HttpError(403, "pending_approval", "Your sign-up is waiting for the admin's approval"),
   rejected: () => new HttpError(403, "account_rejected", "Your sign-up was not approved; you may apply again"),
   deactivated: () => new HttpError(403, "account_deactivated", "This account has been deactivated"),

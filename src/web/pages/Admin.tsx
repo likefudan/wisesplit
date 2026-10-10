@@ -2,6 +2,7 @@ import { useLocation } from "preact-iso";
 import { useEffect, useState } from "preact/hooks";
 import { api } from "../api";
 import { Avatar, ErrorMessage, Loading, Page, useErrorText } from "../components";
+import { formatDate } from "../format";
 import { useI18n } from "../i18n";
 import { RequireUser } from "../RequireUser";
 import { type AdminAction, actionsFor, USER_STATUSES, type UserStatus } from "../../shared/users";
@@ -61,9 +62,6 @@ function UserList({ me }: { me: User }) {
     }
   }
 
-  const date = (iso: string) =>
-    new Date(iso).toLocaleString(lang === "zh" ? "zh-CN" : "en-US", { dateStyle: "medium", timeStyle: "short" });
-
   return (
     <Page title={t("admin.title")}>
       <p>
@@ -99,7 +97,7 @@ function UserList({ me }: { me: User }) {
                   {u.name} {u.id === me.id && <span class="muted">{t("admin.you")}</span>}
                 </div>
                 <div class="muted small">{u.email}</div>
-                <div class="muted small">{t("admin.appliedAt", { date: date(u.appliedAt) })}</div>
+                <div class="muted small">{t("admin.appliedAt", { date: formatDate(u.appliedAt, lang) })}</div>
               </div>
               {!u.adminEmail && (
                 <div class="user-actions">

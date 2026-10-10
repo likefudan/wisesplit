@@ -4,6 +4,8 @@ import { type Env, isStaging } from "./env";
 import { HttpError } from "./http";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
+import { groupRoutes } from "./routes/groups";
+import { inviteRoutes } from "./routes/invites";
 import { meRoutes } from "./routes/me";
 import { testLoginRoutes } from "./routes/testLogin";
 
@@ -31,6 +33,8 @@ app.use("/api/*", async (c, next) => {
 app.route("/api/auth", authRoutes);
 app.route("/api/me", meRoutes);
 app.route("/api/admin", adminRoutes);
+app.route("/api/groups", groupRoutes);
+app.route("/api/invites", inviteRoutes);
 app.route("/api/test", testLoginRoutes);
 
 // Proves the Worker is up and can reach its database.
