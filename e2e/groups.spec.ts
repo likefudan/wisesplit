@@ -1,0 +1,139 @@
+import { type Browser, expect, type Page, test } from "@playwright/test";
+
+const unique = (name: string) => `${name}-${Math.random().toString(36).slice(2, 8)}@example.com`;
+
+/** Signs this page's browser in as a Google identity through the local test login. */
+async function signIn(page: Page, email: string, name = "Tester") {
+  const res = await page.request.post("/api/test/login", {
+    headers: { "X-Test-Login-Secret": "e2e-secret", Origin: "http://localhost:8788" },
+    data: { email, name },
+  });
+  expect(res.status()).toBe(204);
+}
+
+/** A signed-up, approved user in a browser of their own: the admin approves on signing up. */
+async function approvedUser(browser: Browser, email: string, name: string) {
+  const page = await (await browser.newContext()).newPage();
+  await signIn(page, email, name);
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Sign up" })).toBeVisible();
+  await page.getByRole("button", { name: "Sign up" }).click();
+  await expect(page.getByRole("heading", { name: "Waiting for approval" })).toBeVisible();
+  const admin = await (await browser.newContext()).newPage();
+  await signIn(admin, "admin@example.com", "Admin");
+  await admin.goto("/");
+  const signupForm = admin.getByRole("heading", { name: "Sign up" });
+  await expect(admin.getByRole("heading", { name: /^Hi, / }).or(signupForm)).toBeVisible();
+  if (await signupForm.isVisible()) await admin.getByRole("button", { name: "Sign up" }).click();
+  await admin.goto("/admin");
+  await admin.getByRole("listitem").filter({ hasText: email }).getByRole("button", { name: "Approve" }).click();
+  await expect(admin.getByRole("listitem").filter({ hasText: email })).toHaveCount(0);
+  await admin.context().close();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: `Hi, ${name}!` })).toBeVisible();
+  return page;
+}
+
+async function createGroup(page: Page, name: string, currency: string) {
+  await page.goto("/");
+  await page.getByRole("link", { name: "New group" }).click();
+  await page.getByLabel("Group name").fill(name);
+  await page.getByLabel("Currency").selectOption(currency);
+  await page.getByRole("button", { name: "Create group" }).click();
+  await expect(page.getByRole("heading", { name })).toBeVisible();
+}
+
+const member = (page: Page, name: string) => page.getByRole("listitem").filter({ hasText: name });
+
+test("create a group, add a friend by email, and they can leave", async ({ browser }) => {
+  const ownerEmail = unique("owner");
+  const owner = await approvedUser(browser, ownerEmail, "Owner Olga");
+  const friendEmail = unique("friend");
+  const friend = await approvedUser(browser, friendEmail, "Friend Finn");
+
+  await createGroup(owner, "Beach trip", "EUR");
+  await expect(owner.getByText("Currency: EUR")).toBeVisible();
+  await expect(member(owner, "Owner Olga")).toContainText("owner");
+
+  await owner.getByLabel("Their Google email").fill("nobody@example.com");
+  await owner.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(owner.getByRole("alert")).toContainText("No wisesplit user has this email");
+  await owner.getByLabel("Their Google email").fill(friendEmail.toUpperCase());
+  await owner.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(owner.getByText("Friend Finn was added.")).toBeVisible();
+  await expect(member(owner, "Friend Finn")).toBeVisible();
+
+  // The friend finds it on their front page.
+  await friend.goto("/");
+  await friend.getByRole("link", { name: /Beach trip/ }).click();
+  await expect(friend.getByRole("heading", { name: "Beach trip" })).toBeVisible();
+  await expect(friend.getByRole("button", { name: "Delete group" })).toHaveCount(0);
+  friend.once("dialog", (d) => d.accept());
+  await friend.getByRole("button", { name: "Leave group" }).click();
+  await expect(friend.getByRole("heading", { name: "Hi, Friend Finn!" })).toBeVisible();
+  await expect(friend.getByText("You are not in any group yet.")).toBeVisible();
+
+  // The owner can't leave, only delete.
+  await owner.reload();
+  await expect(member(owner, "Friend Finn")).toHaveCount(0);
+  await expect(owner.getByRole("button", { name: "Leave group" })).toHaveCount(0);
+  owner.once("dialog", (d) => d.accept());
+  await owner.getByRole("button", { name: "Delete group" }).click();
+  await expect(owner.getByText("You are not in any group yet.")).toBeVisible();
+});
+
+test("the owner removes a member", async ({ browser }) => {
+  const owner = await approvedUser(browser, unique("owner2"), "Owner Oscar");
+  const friendEmail = unique("friend2");
+  await approvedUser(browser, friendEmail, "Friend Fay");
+  await createGroup(owner, "Flat", "USD");
+  await owner.getByLabel("Their Google email").fill(friendEmail);
+  await owner.getByRole("button", { name: "Add", exact: true }).click();
+  owner.once("dialog", (d) => d.accept());
+  await member(owner, "Friend Fay").getByRole("button", { name: "Remove" }).click();
+  await expect(member(owner, "Friend Fay")).toHaveCount(0);
+});
+
+test("a friend without an account signs up through an invite link and is in at once", async ({ browser, context }) => {
+  const owner = await approvedUser(browser, unique("inviter"), "Inviter Ivy");
+  await createGroup(owner, "Ski week", "JPY");
+  await owner.getByRole("button", { name: "Make an invite link" }).click();
+  const link = await owner.getByRole("textbox", { name: /^Invite link/ }).inputValue();
+  expect(link).toMatch(/^http:\/\/localhost:8788\/invite\/[\w-]{43}$/);
+
+  // Signed out, the link says what it is for and offers Google sign-in.
+  const guest = await context.newPage();
+  await guest.goto(link);
+  await expect(guest.getByText("Inviter Ivy invited you to join “Ski week” on wisesplit.")).toBeVisible();
+  await expect(guest.getByText("Google sign-in is not set up on this site yet.")).toBeVisible();
+
+  // Signed in with Google (approval is on by default), they sign up and land in the group.
+  await signIn(guest, unique("newbie"), "Newbie Nora");
+  await guest.reload();
+  await guest.getByRole("button", { name: "Sign up" }).click();
+  await expect(guest.getByRole("heading", { name: "Ski week" })).toBeVisible();
+  await expect(member(guest, "Inviter Ivy")).toBeVisible();
+  await guest.goto("/");
+  await expect(guest.getByRole("heading", { name: "Hi, Newbie Nora!" })).toBeVisible();
+
+  // The link is used up.
+  const late = await (await browser.newContext()).newPage();
+  await late.goto(link);
+  await expect(late.getByText("This invite link has already been used.")).toBeVisible();
+  // While the one who used it is sent to the group.
+  await guest.goto(link);
+  await guest.getByRole("button", { name: "Open the group" }).click();
+  await expect(guest.getByRole("heading", { name: "Ski week" })).toBeVisible();
+});
+
+test("someone already signed up joins through an invite link with one click", async ({ browser }) => {
+  const owner = await approvedUser(browser, unique("inviter2"), "Inviter Ian");
+  const friend = await approvedUser(browser, unique("joiner"), "Joiner Jo");
+  await createGroup(owner, "Book club", "GBP");
+  await owner.getByRole("button", { name: "Make an invite link" }).click();
+  await friend.goto(await owner.getByRole("textbox", { name: /^Invite link/ }).inputValue());
+  await friend.getByRole("button", { name: "Join group" }).click();
+  await expect(friend.getByRole("heading", { name: "Book club" })).toBeVisible();
+  await owner.reload();
+  await expect(member(owner, "Joiner Jo")).toBeVisible();
+});

@@ -13,7 +13,7 @@ export const NAME_MAX = 50;
  * zero-width space, soft hyphen) removed, keeping the zero-width joiners some scripts and emoji
  * need; then trimmed, with inner whitespace (control characters included) collapsed to one space.
  */
-const tidyName = (value: unknown) =>
+export const tidyName = (value: unknown) =>
   typeof value === "string"
     ? value
         .replace(/[\u00ad\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]+/g, "")

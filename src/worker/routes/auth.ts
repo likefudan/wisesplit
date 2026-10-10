@@ -1,9 +1,10 @@
 import { type Context, Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import { cookieName, cookieOptions, endSession, type SessionRow, signedIn, startSession } from "../auth";
+import { cookieName, cookieOptions, endSession, notApproved, type SessionRow, signedIn, startSession } from "../auth";
 import type { Env } from "../env";
 import { HttpError, readJson, str } from "../http";
+import { inviteNotFound, isInviteToken, registerByInvite } from "../invites";
 import { fromBase64Url, pkceChallenge, randomToken, timingSafeEqual, toBase64Url } from "../lib/crypto";
 import { turnstileConfigured, verifyTurnstile } from "../turnstile";
 import { alreadyRegistered, googleName, parseLang, parseName, publicUser, register } from "../users";
@@ -187,7 +188,8 @@ authRoutes.get("/google/callback", async (c) => {
 });
 
 // Sign-up, and re-applying after a rejection: the display name, the language the page is in, and
-// the Turnstile answer.
+// the Turnstile answer. With `inviteToken` (an invite link's), a new user is approved at once and
+// joins that link's group; a rejected applicant can't get round the admin that way.
 authRoutes.post("/register", async (c) => {
   const { session, user: existing } = await signedIn(c);
   if (!session) throw new HttpError(401, "login_required", "Sign in with Google first");
@@ -195,9 +197,18 @@ authRoutes.post("/register", async (c) => {
   const body = await readJson(c.req.raw);
   const name = parseName(body.name);
   const lang = parseLang(body.lang);
+  const invite = "inviteToken" in body ? str(body.inviteToken) : null;
+  if (invite !== null) {
+    if (existing) throw notApproved.rejected();
+    if (!isInviteToken(invite)) throw inviteNotFound();
+  }
   await verifyTurnstile(c.env, str(body.turnstileToken), c.req.header("CF-Connecting-IP"));
-  const user = await register(c.env, session, existing, { name, lang });
-  return c.json({ user: publicUser(c.env, user) });
+  if (invite === null) {
+    const user = await register(c.env, session, existing, { name, lang });
+    return c.json({ user: publicUser(c.env, user) });
+  }
+  const { user, groupId } = await registerByInvite(c.env, session, { name, lang }, invite);
+  return c.json({ user: publicUser(c.env, user), groupId });
 });
 
 authRoutes.post("/logout", async (c) => {

@@ -45,6 +45,12 @@ curl -i -X POST http://localhost:8787/api/test/login -H 'Origin: http://localhos
 - API routes for members use `requireApproved` from `src/worker/auth.ts` (`c.get("user")` is the user); admin routes use `requireAdmin`.
 - `POST /api/test/login` signs in without Google for the browser tests. It works only when `ENVIRONMENT` is `local` or `staging` and `TEST_LOGIN_SECRET` is set; production never has it (a unit test and the post-deploy smoke test check).
 
+### Groups
+
+- Any approved user can create a group (`src/worker/routes/groups.ts`) and is its owner for good: the owner can remove members and delete the group but can't leave it. Each group has one currency from the fixed list in `src/shared/currencies.ts`, set at creation.
+- Members add approved users by their Google email, or make an invite link (`/invite/<token>`, single use, 7 days; only the token's SHA-256 is stored). Someone new who signs up through a link skips the approval queue and the caps (Turnstile still applies) and lands in the group; someone already signed up joins with one click, and a user still waiting for approval is approved by it. Rejected and deactivated users can't use links (`src/worker/invites.ts`).
+- Leaving, removal and deletion will require the group to be settled; `mayLeave`/`mayDelete` in `src/worker/groups.ts` are stubs until expenses exist.
+
 ### Languages
 
 Every string on the pages comes from `src/shared/i18n.ts`, which holds an English and a Chinese table with the same keys. Add both when adding a message; the type checker catches a missing Chinese entry and `test/i18n.test.ts` checks the `{placeholders}` match. The chosen language is remembered in the browser; a first visit follows the browser's preferred language.

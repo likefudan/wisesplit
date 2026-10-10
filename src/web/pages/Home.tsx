@@ -6,6 +6,7 @@ import { ErrorMessage, Loading, Page, useErrorText } from "../components";
 import { useI18n } from "../i18n";
 import { refreshSession, type Session, type User, setUser, signOut, useSession } from "../session";
 import { Turnstile } from "../turnstile";
+import { GroupList } from "./Groups";
 
 /**
  * The front page, which follows where the visitor is: signed out, signed in with Google but not
@@ -60,8 +61,7 @@ export function Home() {
       return (
         <Page title={t("home.welcome", { name: user.name })}>
           <LoginErrorNote />
-          <p class="lead">{t("app.tagline")}</p>
-          <p>{t("home.comingSoon")}</p>
+          <GroupList />
         </Page>
       );
   }
@@ -73,21 +73,27 @@ export function SignedOut({ session, next }: { session: Session; next?: string }
   const { query } = useLocation();
   // Back from a failed Google sign-in: try again towards the page it started from.
   next ??= query.next;
-  const href = `/api/auth/google${next ? `?next=${encodeURIComponent(next)}` : ""}`;
   return (
     <Page title={t("home.hello")}>
       <p class="lead">{t("app.tagline")}</p>
       <p>{t("home.signedOut")}</p>
       <LoginErrorNote />
-      {session.googleEnabled ? (
-        // target="_top": a real page load to the Worker, not a route inside this app.
-        <a class="button" href={href} target="_top">
-          {t("login.google")}
-        </a>
-      ) : (
-        <p class="muted">{t("login.error.not_configured")}</p>
-      )}
+      <GoogleSignIn session={session} next={next} />
     </Page>
+  );
+}
+
+/** The Google sign-in button; `next` is where to come back to afterwards. */
+export function GoogleSignIn({ session, next }: { session: Session; next?: string }) {
+  const { t } = useI18n();
+  const href = `/api/auth/google${next ? `?next=${encodeURIComponent(next)}` : ""}`;
+  return session.googleEnabled ? (
+    // target="_top": a real page load to the Worker, not a route inside this app.
+    <a class="button" href={href} target="_top">
+      {t("login.google")}
+    </a>
+  ) : (
+    <p class="muted">{t("login.error.not_configured")}</p>
   );
 }
 
@@ -103,8 +109,21 @@ function LoginErrorNote() {
   return <ErrorMessage>{isMessageKey(key) ? t(key) : t("login.error.failed")}</ErrorMessage>;
 }
 
-/** Signing up, or applying again after a rejection. */
-function SignupForm({ session, again }: { session: Session; again?: boolean }) {
+/**
+ * Signing up, or applying again after a rejection. With `inviteToken` the sign-up goes through
+ * that invite link, and `onJoined` gets the group the new user is now in.
+ */
+export function SignupForm({
+  session,
+  again,
+  inviteToken,
+  onJoined,
+}: {
+  session: Session;
+  again?: boolean;
+  inviteToken?: string;
+  onJoined?: (groupId: string) => void;
+}) {
   const { lang, t } = useI18n();
   const errorText = useErrorText();
   const [name, setName] = useState(session.user?.name ?? session.identity?.name ?? "");
@@ -123,8 +142,14 @@ function SignupForm({ session, again }: { session: Session; again?: boolean }) {
     setBusy(true);
     setError("");
     try {
-      const { user } = await api<{ user: User }>("/api/auth/register", { name, lang, turnstileToken: token });
+      const { user, groupId } = await api<{ user: User; groupId?: string }>("/api/auth/register", {
+        name,
+        lang,
+        turnstileToken: token,
+        ...(inviteToken === undefined ? {} : { inviteToken }),
+      });
       setUser(user);
+      if (groupId) onJoined?.(groupId);
     } catch (err) {
       setError(errorText(err));
       // A Turnstile answer works only once.
