@@ -11,7 +11,9 @@ export const CSP_HEADER = "Content-Security-Policy-Report-Only";
 
 export const CSP = [
   "default-src 'self'",
-  "script-src 'self'",
+  // Cloudflare Turnstile (the sign-up form's human check) is a script plus an iframe.
+  "script-src 'self' https://challenges.cloudflare.com",
+  "frame-src https://challenges.cloudflare.com",
   // Inline style attributes.
   "style-src 'self' 'unsafe-inline'",
   // Google profile pictures come from googleusercontent.com.

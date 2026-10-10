@@ -16,16 +16,28 @@ const checks = [
     (r, body) => r.status === 200 && body.includes(staging ? "Disallow: /\n" : "Disallow: /api/"),
   ],
   ["unknown API path", "/api/not-a-real-path", (r) => r.status === 404],
+  ["sign-in status", "/api/auth/session", (r, body) => r.status === 200 && "googleEnabled" in JSON.parse(body)],
+  // The live site must never have the browser tests' test login.
+  ...(staging
+    ? []
+    : [
+        [
+          "no test login",
+          "/api/test/login",
+          (r) => r.status === 404,
+          { method: "POST", headers: { Origin: site, "Content-Type": "application/json" }, body: "{}" },
+        ],
+      ]),
 ];
 
 let failed = 0;
-for (const [name, path, ok] of checks) {
+for (const [name, path, ok, init] of checks) {
   let passed = false;
   let detail = "";
   for (let attempt = 0; attempt < 6 && !passed; attempt++) {
     if (attempt) await new Promise((r) => setTimeout(r, 10_000));
     try {
-      const res = await fetch(site + path);
+      const res = await fetch(site + path, init);
       const body = await res.text();
       passed = ok(res, body);
       detail = `HTTP ${res.status}`;
