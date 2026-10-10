@@ -19,9 +19,12 @@ const googleKeys = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2
 export const googleEnabled = (env: Env) => !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
 const callbackUrl = (env: Env) => `${new URL(env.SITE_ORIGIN).origin}/api/auth/google/callback`;
 
-/** Where to land after Google: a path on this site only (no other host, no "//evil" or "/\\evil"). */
+/**
+ * Where to land after Google: a page of this site only (no other host, no "//evil" or "/\\evil",
+ * and not an API address, which would show raw data or start another sign-in).
+ */
 export const safeNext = (v: string | undefined) =>
-  v && /^\/[\w/.~-]*(\?[\w=&%.+~:,-]*)?$/.test(v) && !v.startsWith("//") ? v : "/";
+  v && /^\/[\w/.~-]*(\?[\w=&%.+~:,-]*)?$/.test(v) && !v.startsWith("//") && !/^\/api(\/|\?|$)/.test(v) ? v : "/";
 
 /** The page saying why sign-in did not work, with the page to come back to after trying again. */
 const loginError = (error: string, next = "/") =>

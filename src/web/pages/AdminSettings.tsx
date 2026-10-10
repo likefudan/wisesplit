@@ -27,10 +27,14 @@ function SettingsForm() {
 
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
+    let alive = true;
     setMessage(null);
     api<{ settings: Settings }>("/api/admin/settings")
-      .then((r) => show(r.settings))
-      .catch((e) => setMessage({ ok: false, error: e }));
+      .then((r) => alive && show(r.settings))
+      .catch((e) => alive && setMessage({ ok: false, error: e }));
+    return () => {
+      alive = false;
+    };
   }, [attempt]);
 
   async function save(e: Event) {

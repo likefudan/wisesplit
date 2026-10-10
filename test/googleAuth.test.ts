@@ -129,6 +129,9 @@ describe("Google sign-in", () => {
     expect(safeNext("https://evil.example/")).toBe("/");
     expect(safeNext("/profile")).toBe("/profile");
     expect(safeNext(undefined)).toBe("/");
+    expect(safeNext("/api/auth/google?next=/api/auth/google")).toBe("/");
+    expect(safeNext("/api")).toBe("/");
+    expect(safeNext("/apiary")).toBe("/apiary");
   });
 
   it.each([

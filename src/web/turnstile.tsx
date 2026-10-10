@@ -58,7 +58,9 @@ export function Turnstile({
     setFailed(false);
     loadScript()
       .then(() => {
-        if (!alive || !box.current || !window.turnstile) return;
+        if (!alive || !box.current) return;
+        // Loaded but not working (e.g. blocked by an extension): treat it as a failed load.
+        if (!window.turnstile) throw new Error("turnstile missing");
         widget = window.turnstile.render(box.current, {
           sitekey: siteKey,
           language: lang === "zh" ? "zh-cn" : "en",
