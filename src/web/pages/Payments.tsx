@@ -35,13 +35,17 @@ export function Suggestions({ group, me, suggestions }: { group: GroupDetail; me
       <ul class="balance-list">
         {suggestions.map((s) => {
           const amount = formatAmount(s.amount, group.currency, lang);
-          // Paid by you; or by someone deactivated, who can't record it, to you.
+          // Paid by you; or by someone deactivated, who can't record it, to you. Less what has been
+          // sent already and awaits confirmation: nothing left, no button.
+          const left = String(s.amount - s.pending);
           const link =
-            s.fromId === me.id
-              ? payPath(group, { to: s.toId, amount: String(s.amount) })
-              : s.toId === me.id && isDeactivated(group, s.fromId)
-                ? payPath(group, { from: s.fromId, amount: String(s.amount) })
-                : null;
+            s.amount <= s.pending
+              ? null
+              : s.fromId === me.id
+                ? payPath(group, { to: s.toId, amount: left })
+                : s.toId === me.id && isDeactivated(group, s.fromId)
+                  ? payPath(group, { from: s.fromId, amount: left })
+                  : null;
           return (
             <li key={`${s.fromId}-${s.toId}`} class="suggestion-row">
               <span>
@@ -91,6 +95,7 @@ export function Payments({
 
   useEffect(() => {
     let alive = true;
+    setLoadError(null);
     api<PaymentList>(path)
       .then((r) => {
         if (!alive) return;
@@ -199,6 +204,8 @@ function PendingPayment({
 }) {
   const { t } = useI18n();
   const payeeGone = isDeactivated(group, p.toId);
+  // Neither side can sign in to deal with it: the owner may withdraw it.
+  const stuck = payeeGone && isDeactivated(group, p.fromId) && group.ownerId === me.id;
   return (
     <li class="card">
       <PaymentLine payment={p} group={group} />
@@ -209,7 +216,7 @@ function PendingPayment({
             ? t("payment.payeeDeactivated", { name: p.toName })
             : t("payment.waitingFor", { name: p.toName })}
       </span>
-      {(p.toId === me.id || p.fromId === me.id) && (
+      {(p.toId === me.id || p.fromId === me.id || stuck) && (
         <div class="actions payment-actions">
           {(p.toId === me.id || payeeGone) && (
             <button type="button" class="button small" disabled={busy} onClick={() => decide(p, "confirm")}>
@@ -221,7 +228,7 @@ function PendingPayment({
               {t("payment.decline")}
             </button>
           )}
-          {p.fromId === me.id && (
+          {(p.fromId === me.id || stuck) && (
             <button type="button" class="button small secondary" disabled={busy} onClick={() => decide(p, "withdraw")}>
               {t("payment.withdraw")}
             </button>

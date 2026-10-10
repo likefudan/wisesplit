@@ -173,6 +173,7 @@ describe("settling up", () => {
     expect(await errorCode(await pay(id, bob, bob, ann, 0))).toBe("invalid_amount");
     expect(await errorCode(await pay(id, bob, bob, ann, 1.5))).toBe("invalid_amount");
     expect(await errorCode(await pay(id, bob, bob, ann, 100, "cash"))).toBe("invalid_method");
+    expect(await errorCode(await pay(id, ann, bob, ann, 100, "venmo"))).toBe("invalid_method");
     // Someone else's payment, or one "received" from someone who can still confirm it themselves.
     expect(await errorCode(await pay(id, cat, bob, ann, 100))).toBe("not_your_payment");
     expect(await errorCode(await pay(id, ann, bob, ann, 100))).toBe("not_your_payment");
@@ -233,6 +234,20 @@ describe("payments with a deactivated member", () => {
     await deactivate(ann);
     expect((await json(await decide(id, bob, p.id, "confirm"))).payment.status).toBe("confirmed");
     expect((await balancesOf(id, bob)).suggestions).toEqual([]);
+  });
+});
+
+describe("a pending payment between two deactivated members", () => {
+  it("can be withdrawn by the owner, so the group can still be settled", async () => {
+    const { id, people } = await makeGroup(["Ann", "Bob", "Cat"]);
+    const [ann, bob, cat] = people as [Person, Person, Person];
+    const p = (await json(await pay(id, bob, bob, cat, 100))).payment;
+    expect((await decide(id, ann, p.id, "withdraw")).status).toBe(403);
+    await deactivate(bob);
+    expect((await decide(id, ann, p.id, "withdraw")).status).toBe(403);
+    await deactivate(cat);
+    expect((await json(await decide(id, ann, p.id, "withdraw"))).payment.status).toBe("withdrawn");
+    expect((await post(`/api/groups/${id}/delete`, ann.cookie)).status).toBe(204);
   });
 });
 

@@ -35,8 +35,11 @@ settlementRoutes.post("/payments", async (c) => {
   if (!isPaymentMethod(body.method)) throw new HttpError(400, "invalid_method", "Method must be venmo or other");
   if (body.method === "venmo" && group.currency !== "USD")
     throw new HttpError(400, "venmo_usd_only", "Venmo is only for US-dollar groups");
-  // Payers record what they paid. The payee records it only when the payer is deactivated.
+  // Payers record what they paid. The payee records it only when the payer is deactivated (and
+  // as cash or other: a Venmo payment is one the payer sent from this site).
   if (from !== me.id && to !== me.id) throw notYours();
+  if (body.method === "venmo" && from !== me.id)
+    throw new HttpError(400, "invalid_method", "Only the payer can record a Venmo payment");
   const other = from === me.id ? to : from;
   const id = randomId();
   const at = now();
@@ -103,8 +106,8 @@ settlementRoutes.post("/payments", async (c) => {
         "too_many_pending",
         `At most ${MAX_PENDING_PAYMENTS} payments by one person may await confirmation`,
       );
-    // Something changed meanwhile (someone left, or was deactivated or reactivated).
-    throw new HttpError(409, "not_in_group", "Someone in this payment has changed; reload and try again");
+    // Something changed meanwhile (someone was deactivated or reactivated).
+    throw new HttpError(409, "payment_conflict", "Something changed meanwhile; reload and try again");
   }
   return c.json({ payment: await paymentById(c.env, group.id, id) });
 });
@@ -123,7 +126,16 @@ const DECISIONS: Record<string, { status: string; who: (me: string) => [string, 
     ],
   },
   decline: { status: "declined", who: (me) => ["to_user = ?", [me]] },
-  withdraw: { status: "withdrawn", who: (me) => ["from_user = ?", [me]] },
+  // Also the group's owner, when both sides have been deactivated and no one else could, so the
+  // group isn't stuck unsettled for good.
+  withdraw: {
+    status: "withdrawn",
+    who: (me) => [
+      `(from_user = ? OR ((SELECT owner_id FROM groups WHERE id = settlements.group_id) = ?
+        AND (SELECT COUNT(*) FROM users WHERE id IN (from_user, to_user) AND status = 'deactivated') = 2))`,
+      [me, me],
+    ],
+  },
 };
 
 for (const [action, rule] of Object.entries(DECISIONS)) {

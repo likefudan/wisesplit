@@ -61,7 +61,7 @@ curl -i -X POST http://localhost:8787/api/test/login -H 'Origin: http://localhos
 
 - The group page suggests who pays whom (`simplifyDebts` in `src/shared/settlements.ts`): the one who owes most pays the one owed most, repeatedly, so a chain A→B→C becomes A→C and there are never more payments than people with a balance, less one.
 - Payments (`settlements` table, `src/worker/routes/settlements.ts`): the payer records one (any amount, to any member); it counts once the payee taps Received, or the payee declines it, or the payer withdraws it while pending. In US-dollar groups, paying someone with a Venmo username opens a prefilled Venmo link (note "wisesplit: <group name>"); otherwise, and in every other currency, it is recorded as cash or other.
-- Someone deactivated can't sign in to confirm, so the other side's word is enough: a payment to them counts as soon as it is recorded (or the payer may confirm one already pending), and the payee may record one received from them.
+- Someone deactivated can't sign in to confirm, so the other side's word is enough: a payment to them counts as soon as it is recorded (or the payer may confirm one already pending), and the payee may record one received from them. A pending payment between two deactivated members can be withdrawn by the group's owner, so the group can still be settled.
 - Each payment recorded, confirmed, declined or withdrawn goes into `activity_log`.
 - Each expense added also goes into `activity_log`, which later PRs add edits, deletions, payments and membership changes to.
 

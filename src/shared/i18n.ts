@@ -253,6 +253,7 @@ const en = {
   "error.too_many_pending":
     "You already have 20 payments waiting for confirmation in this group. Wait for those to be confirmed first.",
   "error.payment_not_found": "This payment doesn't exist. Reload the page.",
+  "error.payment_conflict": "Something changed meanwhile. Reload the page and try again.",
   "error.payment_not_pending": "This payment was already confirmed, declined or withdrawn. Reload the page.",
 } as const;
 
@@ -492,6 +493,7 @@ const zh: Record<MessageKey, string> = {
   "error.not_your_payment": "只有付款人或收款人可以这样做，请刷新页面。",
   "error.too_many_pending": "你在这个群组里已有 20 笔等待确认的付款，请等它们被确认后再记。",
   "error.payment_not_found": "这笔付款不存在，请刷新页面。",
+  "error.payment_conflict": "刚才有变化，请刷新页面后重试。",
   "error.payment_not_pending": "这笔付款已经被确认、拒绝或撤回了，请刷新页面。",
 };
 
