@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { ActivityEntry, ActivityPage, ExpenseSnapshot } from "../../shared/activity";
 import type { GroupDetail } from "../../shared/groups";
 import { isMessageKey } from "../../shared/i18n";
@@ -15,36 +15,37 @@ import { useI18n } from "../i18n";
 export function ActivityList({ group, refresh }: { group: GroupDetail; refresh: string }) {
   const { t } = useI18n();
   const errorText = useErrorText();
-  const [entries, setEntries] = useState<ActivityEntry[] | null>(null);
+  const [list, setList] = useState<{ entries: ActivityEntry[]; next: string | null } | null>(null);
   const [names, setNames] = useState<Record<string, string>>({});
-  const [next, setNext] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<unknown>(null);
+  // What failed to load, to try again: the newest entries (null) or the page after `before`.
+  const [failed, setFailed] = useState<{ error: unknown; before: string | null } | null>(null);
+  // Counts loads of the newest entries: an older page asked for before the latest one is dropped,
+  // since the list it would go after has been replaced.
+  const round = useRef(0);
   const path = `/api/groups/${encodeURIComponent(group.id)}/activity`;
 
   async function load(before: string | null) {
+    const mine = before ? round.current : ++round.current;
     setBusy(true);
-    setError(null);
+    setFailed(null);
     try {
       const page = await api<ActivityPage>(before ? `${path}?before=${encodeURIComponent(before)}` : path);
+      if (mine !== round.current) return;
       setNames((known) => ({ ...known, ...page.names }));
-      if (before) {
-        setEntries((list) => [...(list ?? []), ...page.entries]);
-        setNext(page.next);
-      } else {
-        // The newest page again: what is new goes on top of what is already shown, unless there
-        // is more new than one page holds (then the list starts over from it).
+      setList((shown) => {
+        if (before) return { entries: [...(shown?.entries ?? []), ...page.entries], next: page.next };
+        // The newest entries again: what is new goes on top of what is shown, unless there is more
+        // new than one page holds (then the list starts over).
         const fresh = new Set(page.entries.map((e) => e.id));
-        const joins = (list: ActivityEntry[] | null) => !!list?.some((e) => fresh.has(e.id));
-        setEntries((list) =>
-          joins(list) ? [...page.entries, ...list!.filter((e) => !fresh.has(e.id))] : page.entries,
-        );
-        if (!joins(entries)) setNext(page.next);
-      }
-    } catch (err) {
-      setError(err);
+        if (shown?.entries.some((e) => fresh.has(e.id)))
+          return { entries: [...page.entries, ...shown.entries.filter((e) => !fresh.has(e.id))], next: shown.next };
+        return { entries: page.entries, next: page.next };
+      });
+    } catch (error) {
+      if (mine === round.current) setFailed({ error, before });
     } finally {
-      setBusy(false);
+      if (mine === round.current) setBusy(false);
     }
   }
 
@@ -52,11 +53,14 @@ export function ActivityList({ group, refresh }: { group: GroupDetail; refresh: 
     load(null);
   }, [group.id, refresh]);
 
+  const entries = list?.entries ?? null;
+  const next = list?.next ?? null;
+
   return (
     <section>
       <h2>{t("activity.title")}</h2>
       {entries === null ? (
-        error === null && <Loading />
+        failed === null && <Loading />
       ) : entries.length === 0 ? (
         <p class="muted">{t("activity.empty")}</p>
       ) : (
@@ -66,15 +70,15 @@ export function ActivityList({ group, refresh }: { group: GroupDetail; refresh: 
           ))}
         </ul>
       )}
-      {error !== null && (
+      {failed !== null && (
         <>
-          <ErrorMessage>{errorText(error)}</ErrorMessage>
-          <button type="button" class="button secondary" disabled={busy} onClick={() => load(entries ? next : null)}>
+          <ErrorMessage>{errorText(failed.error)}</ErrorMessage>
+          <button type="button" class="button secondary" disabled={busy} onClick={() => load(failed.before)}>
             {t("common.retry")}
           </button>
         </>
       )}
-      {error === null && next && (
+      {failed === null && next && (
         <div class="actions list-more">
           <button type="button" class="button secondary" disabled={busy} onClick={() => load(next)}>
             {t("activity.more")}

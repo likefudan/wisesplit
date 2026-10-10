@@ -137,7 +137,7 @@ function GroupView({ id, me }: { id: string; me: User }) {
   // Removing a member, leaving or deleting: what failed, shown next to the member list.
   const [actionError, setActionError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
-  // Counts the expenses deleted on this page, to load the balances and activity again.
+  // Counts the expenses deleted (or found changed) on this page.
   const [changes, setChanges] = useState(0);
 
   useEffect(() => {
@@ -165,6 +165,9 @@ function GroupView({ id, me }: { id: string; me: User }) {
     );
 
   const isOwner = group.ownerId === me.id;
+  // Who is in the group and how many expenses were deleted here: when either changes, the balances
+  // and the activity are loaded again.
+  const refresh = `${group.members.map((m) => m.id).join()}/${changes}`;
   const path = `/api/groups/${encodeURIComponent(group.id)}`;
 
   async function act(confirmText: string, run: () => Promise<void>) {
@@ -209,8 +212,7 @@ function GroupView({ id, me }: { id: string; me: User }) {
     <Page title={group.name}>
       <p class="muted">{t("group.currency", { currency: currencyLabel(group.currency, lang) })}</p>
 
-      {/* Someone added or removed changes who is listed; a deleted expense, the numbers. */}
-      <Balances key={`${group.members.map((m) => m.id).join()}/${changes}`} group={group} me={me} />
+      <Balances key={refresh} group={group} me={me} />
       <ExpenseList group={group} me={me} onChange={() => setChanges((n) => n + 1)} />
 
       <section>
@@ -253,7 +255,7 @@ function GroupView({ id, me }: { id: string; me: User }) {
       <AddMember path={path} onAdded={setGroup} onError={lost} />
       <InviteLink path={path} onError={lost} />
 
-      <ActivityList group={group} refresh={`${group.members.map((m) => m.id).join()}/${changes}`} />
+      <ActivityList group={group} refresh={refresh} />
 
       <section>
         {isOwner ? (

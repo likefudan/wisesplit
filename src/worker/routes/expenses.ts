@@ -1,10 +1,10 @@
 import { Hono } from "hono";
 import { ACTIVITY_PAGE, type ExpenseSnapshot } from "../../shared/activity";
-import { EXPENSES_PAGE } from "../../shared/expenses";
+import { EXPENSES_PAGE, netOf } from "../../shared/expenses";
 import { activityPage } from "../activity";
 import type { AppEnv } from "../auth";
 import type { Env } from "../env";
-import { balances, changeOf, expenseById, expensePage, netOf, parseNewExpense, snapshot } from "../expenses";
+import { balances, changeOf, expenseById, expensePage, parseNewExpense, snapshot } from "../expenses";
 import { groupForMember } from "../groups";
 import { HttpError, now, readJson } from "../http";
 import { randomId } from "../lib/crypto";
@@ -112,8 +112,7 @@ function mustBeMembers(me: string, before: ExpenseSnapshot, after: ExpenseSnapsh
   const was = netOf(before);
   const will = after ? netOf(after) : new Map<string, number>();
   const people = new Set([me]);
-  for (const id of new Set([...was.keys(), ...will.keys()]))
-    if (!was.has(id) || was.get(id) !== (will.get(id) ?? 0)) people.add(id);
+  for (const id of new Set([...was.keys(), ...will.keys()])) if (was.get(id) !== (will.get(id) ?? 0)) people.add(id);
   return [...people];
 }
 

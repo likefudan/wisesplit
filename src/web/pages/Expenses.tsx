@@ -1,6 +1,6 @@
 import { useLocation, useRoute } from "preact-iso";
 import { useEffect, useState } from "preact/hooks";
-import { type Balance, type Expense, type ExpensePage, splitEqual } from "../../shared/expenses";
+import { type Balance, type Expense, type ExpensePage, netOf, splitEqual } from "../../shared/expenses";
 import type { GroupDetail } from "../../shared/groups";
 import { amountInput, formatAmount, parseAmount } from "../../shared/money";
 import { ApiError, api } from "../api";
@@ -82,7 +82,10 @@ export function ExpenseList({ group, me, onChange }: { group: GroupDetail; me: U
     setError(null);
     try {
       const page = await api<ExpensePage>(before ? `${path}?before=${encodeURIComponent(before)}` : path);
-      setExpenses((list) => (before && list ? [...list, ...page.expenses] : page.expenses));
+      // An expense moved to an older day since the last page may come again: shown once.
+      setExpenses((list) =>
+        before && list ? [...list, ...page.expenses.filter((e) => !list.some((x) => x.id === e.id))] : page.expenses,
+      );
       setNext(page.next);
     } catch (err) {
       setError(err);
@@ -119,9 +122,10 @@ export function ExpenseList({ group, me, onChange }: { group: GroupDetail; me: U
                 setExpenses((list) => (list ? list.filter((x) => x.id !== e.id) : list));
                 onChange();
               }}
-              onUpdated={(latest) =>
-                setExpenses((list) => (list ? list.map((x) => (x.id === e.id ? latest : x)) : list))
-              }
+              onUpdated={(latest) => {
+                setExpenses((list) => (list ? list.map((x) => (x.id === e.id ? latest : x)) : list));
+                onChange();
+              }}
             />
           ))}
         </ul>
@@ -193,7 +197,9 @@ function ExpenseRow({
       if (code === "expense_changed")
         api<{ expense: Expense }>(path)
           .then((r) => onUpdated(r.expense))
-          .catch(() => {});
+          .catch((err) => {
+            if (err instanceof ApiError && err.code === "expense_not_found") onDeleted();
+          });
     }
   }
 
@@ -269,27 +275,27 @@ function ExpenseLoader({ id, expenseId, me }: { id: string; expenseId: string | 
   const groupPath = `/api/groups/${encodeURIComponent(id)}`;
   const expensePath = expenseId && `${groupPath}/expenses/${encodeURIComponent(expenseId)}`;
 
+  const load = (alive: () => boolean) => {
+    // The group first, so a failure to load the expense can still link back to it.
+    api<{ group: GroupDetail }>(groupPath)
+      .then(async (g) => {
+        if (!alive()) return;
+        setGroup(g.group);
+        if (expensePath) {
+          const e = await api<{ expense: Expense }>(expensePath);
+          if (alive()) setExpense(e.expense);
+        }
+      })
+      .catch((e) => alive() && setError(e));
+  };
+
   useEffect(() => {
     let alive = true;
-    Promise.all([api<{ group: GroupDetail }>(groupPath), expensePath ? api<{ expense: Expense }>(expensePath) : null])
-      .then(([g, e]) => {
-        if (!alive) return;
-        setGroup(g.group);
-        setExpense(e ? e.expense : null);
-      })
-      .catch((e) => alive && setError(e));
+    load(() => alive);
     return () => {
       alive = false;
     };
   }, [groupPath, expensePath]);
-
-  // Someone else saved first: their version replaces the form (and what was typed in it).
-  const reload = expensePath
-    ? () =>
-        api<{ expense: Expense }>(expensePath)
-          .then((r) => setExpense(r.expense))
-          .catch(setError)
-    : undefined;
 
   if (error !== null)
     return (
@@ -306,11 +312,12 @@ function ExpenseLoader({ id, expenseId, me }: { id: string; expenseId: string | 
     );
   return (
     <ExpenseForm
-      key={expense && `${expense.id}@${expense.version}`}
+      // Loaded again (after someone else's change): the form starts over from what is there now.
+      key={expense && `${expense.id}@${expense.version}/${group.members.map((m) => m.id).join()}`}
       group={group}
       me={me}
       expense={expense}
-      reload={reload}
+      reload={expensePath ? () => load(() => true) : undefined}
     />
   );
 }
@@ -324,8 +331,8 @@ interface Person {
 }
 
 /**
- * The form to add an expense, or with `expense`, to edit one. `reload` loads the expense as it is
- * now, after someone else saved it first.
+ * The form to add an expense, or with `expense`, to edit one. `reload` loads the group and the
+ * expense as they are now, after someone else changed them.
  */
 function ExpenseForm({
   group,
@@ -356,11 +363,10 @@ function ExpenseForm({
         people.push({ id: p.userId, name: p.name, deactivated: false, left: true });
   // Someone who has left and owes or is owed something in it: that can't change (the server turns
   // it down), so only the description and date can.
-  const net = (id: string) =>
-    expense
-      ? (expense.paidBy === id ? expense.amount : 0) - (expense.shares.find((s) => s.userId === id)?.amount ?? 0)
-      : 0;
-  const fixedFor = people.filter((p) => p.left && net(p.id) !== 0);
+  const nets = expense
+    ? netOf({ ...expense, shares: Object.fromEntries(expense.shares.map((x) => [x.userId, x.amount])) })
+    : new Map<string, number>();
+  const fixedFor = people.filter((p) => p.left && (nets.get(p.id) ?? 0) !== 0);
   const locked = fixedFor.length > 0;
   const [description, setDescription] = useState(expense?.description ?? "");
   const [amountText, setAmountText] = useState(expense ? amountInput(expense.amount, group.currency) : "");
@@ -412,7 +418,9 @@ function ExpenseForm({
   }
 
   const label = (p: Person) => (p.id === me.id ? `${p.name} (${t("group.you")})` : p.name);
-  const changed = error instanceof ApiError && error.code === "expense_changed";
+  // Someone else changed the expense, or someone in it has left the group meanwhile.
+  const stale =
+    error instanceof ApiError && (error.code === "expense_changed" || error.code === "former_member_involved");
 
   return (
     <Page title={t(expense ? "expenseEdit.title" : "expenseNew.title")}>
@@ -491,7 +499,7 @@ function ExpenseForm({
         </fieldset>
         {error !== null && <ErrorMessage>{errorText(error)}</ErrorMessage>}
         <div class="actions">
-          {changed && reload ? (
+          {stale && reload ? (
             <button type="button" class="button" onClick={reload}>
               {t("expenseEdit.reload")}
             </button>

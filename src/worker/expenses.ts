@@ -126,8 +126,8 @@ export async function expenseById(env: Env, groupId: string, id: string): Promis
 
 /**
  * One page of a group's expenses, newest day first (and, within a day, the last added first),
- * leaving out deleted ones. `before` is the id of the last expense on the previous page (which
- * may have been deleted since: the next page still starts after it).
+ * leaving out deleted ones. `before` is the previous page's `next`: where in that order the page
+ * ended, as it was then, so an expense since deleted or moved to another day changes nothing.
  */
 export async function expensePage(
   env: Env,
@@ -137,14 +137,13 @@ export async function expensePage(
 ): Promise<{ expenses: Expense[]; next: string | null }> {
   let statement: D1PreparedStatement;
   if (before) {
-    const after = await env.DB.prepare("SELECT date, created_at, id FROM expenses WHERE group_id = ? AND id = ?")
-      .bind(groupId, before)
-      .first<{ date: string; created_at: string; id: string }>();
-    if (!after) throw new HttpError(400, "invalid_cursor", "No such expense to list from");
+    const [date, createdAt, id, ...rest] = before.split("|");
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !createdAt || !id || rest.length)
+      throw new HttpError(400, "invalid_cursor", "Not a place in the list");
     statement = env.DB.prepare(
       `${EXPENSE_SELECT} WHERE e.group_id = ? AND e.deleted_at IS NULL AND (e.date, e.created_at, e.id) < (?, ?, ?)
        ${ORDER} LIMIT ?`,
-    ).bind(groupId, after.date, after.created_at, after.id, size + 1);
+    ).bind(groupId, date, createdAt, id, size + 1);
   } else {
     statement = env.DB.prepare(`${EXPENSE_SELECT} WHERE e.group_id = ? AND e.deleted_at IS NULL ${ORDER} LIMIT ?`).bind(
       groupId,
@@ -153,7 +152,8 @@ export async function expensePage(
   }
   const { results } = await statement.all<ExpenseRow>();
   const expenses = results.slice(0, size).map(toExpense);
-  return { expenses, next: results.length > size ? expenses[expenses.length - 1]!.id : null };
+  const last = expenses[expenses.length - 1];
+  return { expenses, next: results.length > size && last ? `${last.date}|${last.createdAt}|${last.id}` : null };
 }
 
 /**
@@ -212,11 +212,4 @@ export function changeOf(before: ExpenseSnapshot, after: ExpenseSnapshot): Expen
     }
   }
   return Object.keys(change.after).length ? change : null;
-}
-
-/** What the expense does to each person's balance: paid minus share, by user id. */
-export function netOf(e: ExpenseSnapshot): Map<string, number> {
-  const net = new Map<string, number>([[e.paidBy, e.amount]]);
-  for (const [id, units] of Object.entries(e.shares)) net.set(id, (net.get(id) ?? 0) - units);
-  return net;
 }

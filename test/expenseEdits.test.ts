@@ -282,8 +282,32 @@ describe("deleting an expense", () => {
     const first = await json(await send(`/api/groups/${id}/expenses`, { cookie: ann.cookie }));
     const last = first.expenses[19];
     expect((await del(id, ann, last)).status).toBe(204);
-    const second = await json(await send(`/api/groups/${id}/expenses?before=${first.next}`, { cookie: ann.cookie }));
+    const second = await json(
+      await send(`/api/groups/${id}/expenses?before=${encodeURIComponent(first.next)}`, { cookie: ann.cookie }),
+    );
     expect(second.expenses.map((e: any) => e.date)).toEqual(["2026-01-02", "2026-01-01"]);
+  });
+
+  it("a page of the list continues where the last one ended, though its last expense moved", async () => {
+    const { id, people } = await makeGroup(["Ann", "Bob"]);
+    const [ann, bob] = people as [Person, Person];
+    for (let i = 0; i < 22; i++)
+      await addExpense(id, ann, {
+        amount: 100,
+        paidBy: ann,
+        participants: [ann, bob],
+        date: `2026-01-${String(i + 1).padStart(2, "0")}`,
+      });
+    const first = await json(await send(`/api/groups/${id}/expenses`, { cookie: ann.cookie }));
+    const last = first.expenses[19];
+    expect(last.date).toBe("2026-01-03");
+    expect(
+      (await edit(id, bob, last, { amount: 100, paidBy: ann, participants: [ann, bob], date: "2025-06-01" })).status,
+    ).toBe(200);
+    const second = await json(
+      await send(`/api/groups/${id}/expenses?before=${encodeURIComponent(first.next)}`, { cookie: ann.cookie }),
+    );
+    expect(second.expenses.map((e: any) => e.date)).toEqual(["2026-01-02", "2026-01-01", "2025-06-01"]);
   });
 });
 

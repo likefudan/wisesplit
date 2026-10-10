@@ -108,3 +108,13 @@ export function spread(amount: number, weights: readonly number[], userIds: read
   }
   return new Map(parts.map((p) => [p.id, p.units]));
 }
+
+/**
+ * What an expense does to each person's balance: what they paid minus their share, by user id.
+ * `shares` by user id, as the activity log keeps them.
+ */
+export function netOf(e: { paidBy: string; amount: number; shares: Record<string, number> }): Map<string, number> {
+  const net = new Map<string, number>([[e.paidBy, e.amount]]);
+  for (const [id, units] of Object.entries(e.shares)) net.set(id, (net.get(id) ?? 0) - units);
+  return net;
+}
