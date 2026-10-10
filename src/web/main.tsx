@@ -6,6 +6,7 @@ import { NewExpense } from "./pages/Expenses";
 import { GroupPage, NewGroup } from "./pages/Groups";
 import { Home } from "./pages/Home";
 import { Invite } from "./pages/Invite";
+import { NewPayment } from "./pages/Payments";
 import { NotFound } from "./pages/NotFound";
 import { Profile } from "./pages/Profile";
 import "./styles.css";
@@ -20,6 +21,7 @@ function App() {
         <Route path="/groups/new" component={NewGroup} />
         <Route path="/groups/:id" component={GroupPage} />
         <Route path="/groups/:id/expenses/new" component={NewExpense} />
+        <Route path="/groups/:id/pay" component={NewPayment} />
         <Route path="/invite/:token" component={Invite} />
         <Route path="/admin" component={Admin} />
         <Route path="/admin/settings" component={AdminSettings} />

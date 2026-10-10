@@ -48,28 +48,44 @@ export const isMember = async (env: Env, groupId: string, userId: string) =>
     .first());
 
 /**
- * SQL that is true while group ? is not settled up: someone's balance in it is not 0. Binds the
- * group id twice. (PR 7 adds: or a payment in it awaits confirmation.)
+ * SQL for every amount that moves someone's balance in group ?, one row each (user_id, net):
+ * what they paid for an expense, less their share of each, plus the confirmed payments they made,
+ * less those they received. Binds the group id four times.
  */
-export const UNSETTLED_SQL = `EXISTS (SELECT 1 FROM (
-    SELECT paid_by AS user_id, amount AS net FROM expenses WHERE group_id = ?
+export const LEDGER_SQL = `SELECT paid_by AS user_id, amount AS net FROM expenses WHERE group_id = ?
     UNION ALL
     SELECT s.user_id, -s.amount FROM expense_shares s JOIN expenses e ON e.id = s.expense_id WHERE e.group_id = ?
-  ) GROUP BY user_id HAVING SUM(net) != 0)`;
-export const unsettledArgs = (groupId: string) => [groupId, groupId];
+    UNION ALL
+    SELECT from_user, amount FROM settlements WHERE group_id = ? AND status = 'confirmed'
+    UNION ALL
+    SELECT to_user, -amount FROM settlements WHERE group_id = ? AND status = 'confirmed'`;
+export const ledgerArgs = (groupId: string) => [groupId, groupId, groupId, groupId];
+
+/**
+ * SQL that is true while group ? is not settled up: someone's balance in it is not 0, or a
+ * payment in it awaits confirmation. Binds the group id five times.
+ */
+export const UNSETTLED_SQL = `(EXISTS (SELECT 1 FROM (${LEDGER_SQL}) GROUP BY user_id HAVING SUM(net) != 0)
+  OR EXISTS (SELECT 1 FROM settlements WHERE group_id = ? AND status = 'pending'))`;
+export const unsettledArgs = (groupId: string) => [...ledgerArgs(groupId), groupId];
 
 /**
  * SQL that is true while user ? may not leave group ? (or be removed from it). The rule
  * (docs/mvp-scope.md §2): someone with any expense involving them, paid by them or shared by
- * them, may go only once the whole group is settled; someone with none may go any time. Written
- * as SQL so the check and the removal are one statement, and an expense added at the same moment
- * can't slip in between.
+ * them, or any payment made or received that counts or may yet count, may go only once the whole
+ * group is settled; someone with none may go any time. Written as SQL so the check and the
+ * removal are one statement, and an expense or payment added at the same moment can't slip in
+ * between.
  */
 export const MAY_NOT_LEAVE_SQL = `((EXISTS (SELECT 1 FROM expenses WHERE group_id = ? AND paid_by = ?)
     OR EXISTS (SELECT 1 FROM expense_shares s JOIN expenses e ON e.id = s.expense_id
-      WHERE e.group_id = ? AND s.user_id = ?))
+      WHERE e.group_id = ? AND s.user_id = ?)
+    OR EXISTS (SELECT 1 FROM settlements WHERE group_id = ? AND ? IN (from_user, to_user)
+      AND status IN ('pending', 'confirmed')))
   AND ${UNSETTLED_SQL})`;
 export const mayNotLeaveArgs = (groupId: string, userId: string) => [
+  groupId,
+  userId,
   groupId,
   userId,
   groupId,
@@ -95,12 +111,19 @@ export async function groupsOf(env: Env, userId: string): Promise<GroupSummary[]
  */
 export async function groupDetail(env: Env, group: GroupRow): Promise<GroupDetail> {
   const { results } = await env.DB.prepare(
-    `SELECT u.id, u.name, u.picture, u.status, m.joined_at
+    `SELECT u.id, u.name, u.picture, u.venmo, u.status, m.joined_at
      FROM group_members m JOIN users u ON u.id = m.user_id
      WHERE m.group_id = ? ORDER BY m.joined_at, u.id`,
   )
     .bind(group.id)
-    .all<{ id: string; name: string; picture: string | null; status: string; joined_at: string }>();
+    .all<{
+      id: string;
+      name: string;
+      picture: string | null;
+      venmo: string | null;
+      status: string;
+      joined_at: string;
+    }>();
   return {
     ...summary(group, results.length),
     createdAt: group.created_at,
@@ -109,6 +132,7 @@ export async function groupDetail(env: Env, group: GroupRow): Promise<GroupDetai
       name: u.name,
       picture: u.picture,
       deactivated: u.status === "deactivated",
+      venmo: u.venmo,
       joinedAt: u.joined_at,
     })),
   };

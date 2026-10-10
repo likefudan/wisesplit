@@ -49,13 +49,20 @@ curl -i -X POST http://localhost:8787/api/test/login -H 'Origin: http://localhos
 
 - Any approved user can create a group (`src/worker/routes/groups.ts`) and is its owner for good: the owner can remove members and delete the group but can't leave it. Each group has one currency from the fixed list in `src/shared/currencies.ts`, set at creation.
 - Members add approved users by their Google email, or make an invite link (`/invite/<token>`, single use, 7 days; only the token's SHA-256 is stored). Someone new who signs up through a link skips the approval queue and the caps (Turnstile still applies) and lands in the group; someone already approved joins with one click. Links don't let in anyone already waiting for approval, rejected or deactivated, and stop working when their maker leaves the group or is deactivated (`src/worker/invites.ts`). A member may have 10 unused links at a time, across their groups.
-- Someone with any expense involving them (paid or shared) can leave or be removed only while the whole group is settled up, and the group can be deleted only then; someone with none can leave any time. The checks are SQL inside the statements that remove or delete (`MAY_NOT_LEAVE_SQL`, `UNSETTLED_SQL` in `src/worker/groups.ts`), so an expense added at the same moment can't slip past them. PR 7 adds pending payments to them.
+- Someone with any expense involving them (paid or shared), or any pending or confirmed payment, can leave or be removed only while the whole group is settled up (every balance 0 and no payment awaiting confirmation), and the group can be deleted only then; someone with none can leave any time. The checks are SQL inside the statements that remove or delete (`MAY_NOT_LEAVE_SQL`, `UNSETTLED_SQL` in `src/worker/groups.ts`), so an expense or payment added at the same moment can't slip past them.
 
 ### Expenses and balances
 
 - Any member adds an expense (`src/worker/routes/expenses.ts`): description, amount, one payer and the members sharing it, all of whom must be in the group, and a day (YYYY-MM-DD, not a time).
 - Money is always a whole number of the currency's smallest unit (cents, yen); `src/shared/money.ts` reads what people type and formats it back. Each person's share is stored (`expense_shares`) and the shares add up to the amount: `spread` in `src/shared/expenses.ts` hands out the leftover units by a fixed rule (largest remainder, then smallest user id), so an equal split gives the first few by id one cent more. Only the equal split exists so far; the table already accepts the others, and stores what was entered for them (`split_params`).
-- A balance is what someone paid minus their shares, worked out from the expenses each time (no stored totals to go stale).
+- A balance is what someone paid minus their shares, plus confirmed payments made minus those received, worked out each time (`LEDGER_SQL` in `src/worker/groups.ts`; no stored totals to go stale).
+
+### Settling up
+
+- The group page suggests who pays whom (`simplifyDebts` in `src/shared/settlements.ts`): the one who owes most pays the one owed most, repeatedly, so a chain A→B→C becomes A→C and there are never more payments than people with a balance, less one.
+- Payments (`settlements` table, `src/worker/routes/settlements.ts`): the payer records one (any amount, to any member); it counts once the payee taps Received, or the payee declines it, or the payer withdraws it while pending. In US-dollar groups, paying someone with a Venmo username opens a prefilled Venmo link (note "wisesplit: <group name>"); otherwise, and in every other currency, it is recorded as cash or other.
+- Someone deactivated can't sign in to confirm, so the other side's word is enough: a payment to them counts as soon as it is recorded (or the payer may confirm one already pending), and the payee may record one received from them. A pending payment between two deactivated members can be withdrawn by the group's owner, so the group can still be settled.
+- Each payment recorded, confirmed, declined or withdrawn goes into `activity_log`.
 - Each expense added also goes into `activity_log`, which later PRs add edits, deletions, payments and membership changes to.
 
 ### Languages

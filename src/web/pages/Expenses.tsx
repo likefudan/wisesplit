@@ -1,6 +1,7 @@
 import { useLocation, useRoute } from "preact-iso";
 import { useEffect, useState } from "preact/hooks";
 import { type Balance, type Expense, type ExpensePage, splitEqual } from "../../shared/expenses";
+import type { Suggestion } from "../../shared/settlements";
 import type { GroupDetail } from "../../shared/groups";
 import { amountInput, formatAmount, parseAmount } from "../../shared/money";
 import { api } from "../api";
@@ -9,25 +10,26 @@ import { formatDay, today } from "../format";
 import { useI18n } from "../i18n";
 import { RequireUser } from "../RequireUser";
 import type { User } from "../session";
+import { Suggestions } from "./Payments";
 
-/** Who owes and who is owed, on the group page. */
-export function Balances({ group, me }: { group: GroupDetail; me: User }) {
+/** Who owes and who is owed, on the group page, and the payments that would settle it. */
+export function Balances({ group, me, version }: { group: GroupDetail; me: User; version: number }) {
   const { lang, t } = useI18n();
   const errorText = useErrorText();
-  const [balances, setBalances] = useState<Balance[] | null>(null);
+  const [data, setData] = useState<{ balances: Balance[]; suggestions: Suggestion[] } | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [reload, setReload] = useState(0);
 
   useEffect(() => {
     let alive = true;
     setError(null);
-    api<{ balances: Balance[] }>(`/api/groups/${encodeURIComponent(group.id)}/balances`)
-      .then((r) => alive && setBalances(r.balances))
+    api<{ balances: Balance[]; suggestions: Suggestion[] }>(`/api/groups/${encodeURIComponent(group.id)}/balances`)
+      .then((r) => alive && setData(r))
       .catch((e) => alive && setError(e));
     return () => {
       alive = false;
     };
-  }, [group.id, reload]);
+  }, [group.id, reload, version]);
 
   return (
     <section>
@@ -39,29 +41,32 @@ export function Balances({ group, me }: { group: GroupDetail; me: User }) {
             {t("common.retry")}
           </button>
         </>
-      ) : balances === null ? (
+      ) : data === null ? (
         <Loading />
       ) : (
-        <ul class="balance-list">
-          {balances.map((b) => {
-            const amount = formatAmount(Math.abs(b.net), group.currency, lang);
-            return (
-              <li key={b.userId} class="balance-row">
-                <span>
-                  {b.name}
-                  {b.userId === me.id && <span class="badge">{t("group.you")}</span>}
-                </span>
-                <span class={b.net > 0 ? "success" : b.net < 0 ? "error" : "muted"}>
-                  {b.net > 0
-                    ? t("group.balance.owed", { amount })
-                    : b.net < 0
-                      ? t("group.balance.owes", { amount })
-                      : t("group.balance.settled")}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
+        <>
+          <ul class="balance-list">
+            {data.balances.map((b) => {
+              const amount = formatAmount(Math.abs(b.net), group.currency, lang);
+              return (
+                <li key={b.userId} class="balance-row">
+                  <span>
+                    {b.name}
+                    {b.userId === me.id && <span class="badge">{t("group.you")}</span>}
+                  </span>
+                  <span class={b.net > 0 ? "success" : b.net < 0 ? "error" : "muted"}>
+                    {b.net > 0
+                      ? t("group.balance.owed", { amount })
+                      : b.net < 0
+                        ? t("group.balance.owes", { amount })
+                        : t("group.balance.settled")}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+          <Suggestions group={group} me={me} suggestions={data.suggestions} />
+        </>
       )}
     </section>
   );
