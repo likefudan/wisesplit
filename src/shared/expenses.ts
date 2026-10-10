@@ -36,6 +36,8 @@ export interface Expense {
   shares: Share[];
   createdBy: string;
   createdAt: string;
+  /** The receipt photo's version (see `receiptPath` in receipts.ts), or null when there is none. */
+  receipt: string | null;
 }
 
 /** What POST /api/groups/:id/expenses takes. */

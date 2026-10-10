@@ -13,15 +13,24 @@ export class ApiError extends Error {
  * Calls the Worker's API: GET without a body, POST with one. Resolves to the parsed JSON (undefined
  * for an empty answer); a non-2xx status, an `{ error }` answer or a body that is not JSON throws.
  */
-export async function api<T>(path: string, body?: unknown): Promise<T> {
+export function api<T>(path: string, body?: unknown): Promise<T> {
+  return request<T>(path, {
+    method: body === undefined ? "GET" : "POST",
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+/** POSTs a file (its type as Content-Type), answered like `api`. */
+export function apiUpload<T>(path: string, file: Blob): Promise<T> {
+  return request<T>(path, { method: "POST", headers: { "Content-Type": file.type }, body: file });
+}
+
+async function request<T>(path: string, init: RequestInit): Promise<T> {
   let res: Response;
   let text: string;
   try {
-    res = await fetch(path, {
-      method: body === undefined ? "GET" : "POST",
-      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    res = await fetch(path, init);
     text = await res.text();
   } catch {
     throw new ApiError("network", 0, "network error");

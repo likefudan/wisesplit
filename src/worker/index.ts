@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { SECURITY_HEADERS } from "../shared/security";
 import { type Env, isStaging } from "./env";
 import { HttpError } from "./http";
+import { cleanUpReceipts } from "./receipts";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
 import { groupRoutes } from "./routes/groups";
@@ -13,8 +14,8 @@ const app = new Hono<{ Bindings: Env }>();
 
 app.use("*", async (c, next) => {
   await next();
-  // API answers will be per user; keep them out of caches.
-  if (c.req.path.startsWith("/api/")) c.header("Cache-Control", "no-store");
+  // API answers are per user; keep them out of caches, unless a route says otherwise (receipt photos).
+  if (c.req.path.startsWith("/api/") && !c.res.headers.has("Cache-Control")) c.header("Cache-Control", "no-store");
   // Same as public/_headers, which covers the static pages.
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) c.header(name, value);
   if (isStaging(c.env)) c.header("X-Robots-Tag", "noindex, nofollow");
@@ -80,4 +81,9 @@ app.onError((err, c) => {
 
 export default {
   fetch: app.fetch,
+  // Daily (wrangler.jsonc "triggers"): removes receipt photos no expense uses any more.
+  async scheduled(_controller, env) {
+    const removed = await cleanUpReceipts(env);
+    if (removed) console.log(`removed ${removed} unused receipt photos`);
+  },
 } satisfies ExportedHandler<Env>;

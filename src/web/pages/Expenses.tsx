@@ -3,10 +3,12 @@ import { useEffect, useState } from "preact/hooks";
 import { type Balance, type Expense, type ExpensePage, splitEqual } from "../../shared/expenses";
 import type { GroupDetail } from "../../shared/groups";
 import { amountInput, formatAmount, parseAmount } from "../../shared/money";
-import { api } from "../api";
+import { receiptBase } from "../../shared/receipts";
+import { api, apiUpload } from "../api";
 import { ErrorMessage, Loading, Page, useErrorText } from "../components";
 import { formatDay, today } from "../format";
 import { useI18n } from "../i18n";
+import { PhotoField, ReceiptPanel, usePhotoDraft } from "../receipts";
 import { RequireUser } from "../RequireUser";
 import type { User } from "../session";
 
@@ -110,7 +112,15 @@ export function ExpenseList({ group, me }: { group: GroupDetail; me: User }) {
       ) : (
         <ul class="card-list">
           {expenses.map((e) => (
-            <ExpenseRow key={e.id} expense={e} group={group} me={me} />
+            <ExpenseRow
+              key={e.id}
+              expense={e}
+              group={group}
+              me={me}
+              onReceipt={(receipt) =>
+                setExpenses((list) => (list ? list.map((x) => (x.id === e.id ? { ...x, receipt } : x)) : list))
+              }
+            />
           ))}
         </ul>
       )}
@@ -133,8 +143,19 @@ export function ExpenseList({ group, me }: { group: GroupDetail; me: User }) {
   );
 }
 
-function ExpenseRow({ expense: e, group, me }: { expense: Expense; group: GroupDetail; me: User }) {
+function ExpenseRow({
+  expense: e,
+  group,
+  me,
+  onReceipt,
+}: {
+  expense: Expense;
+  group: GroupDetail;
+  me: User;
+  onReceipt: (receipt: string | null) => void;
+}) {
   const { lang, t } = useI18n();
+  const [open, setOpen] = useState(false);
   const money = (units: number) => formatAmount(units, group.currency, lang);
   const share = e.shares.find((s) => s.userId === me.id);
   const lent = (e.paidBy === me.id ? e.amount : 0) - (share?.amount ?? 0);
@@ -148,10 +169,13 @@ function ExpenseRow({ expense: e, group, me }: { expense: Expense; group: GroupD
           : [t("expense.youBorrowed", { amount: money(-lent) }), "error"];
   return (
     <li>
-      <details class="card expense">
+      <details class="card expense" onToggle={(ev) => setOpen(ev.currentTarget.open)}>
         <summary class="expense-summary">
           <span class="expense-main">
-            <span class="card-title">{e.description}</span>
+            <span class="card-title">
+              {e.description}
+              {e.receipt && <span class="badge">{t("expense.hasReceipt")}</span>}
+            </span>
             <span class="muted small">
               {formatDay(e.date, lang)} · {t("expense.paid", { name: e.paidByName, amount: money(e.amount) })}
             </span>
@@ -166,6 +190,7 @@ function ExpenseRow({ expense: e, group, me }: { expense: Expense; group: GroupD
             ))}
           </ul>
         </div>
+        <ReceiptPanel groupId={group.id} expense={e} open={open} onChange={onReceipt} />
       </details>
     </li>
   );
@@ -224,6 +249,13 @@ function NewExpenseForm({ group, me }: { group: GroupDetail; me: User }) {
   const [checked, setChecked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const draft = usePhotoDraft();
+  // Saved, but its photo didn't go up: the expense's id, to send the photo again.
+  const [savedId, setSavedId] = useState<string | null>(null);
+  // On the retry screen, a new photo (or none) makes the failed upload's error stale.
+  useEffect(() => {
+    if (savedId) setError(null);
+  }, [draft.photo]);
 
   const amount = parseAmount(amountText, group.currency);
   const chosen = group.members.filter((m) => participants.has(m.id)).map((m) => m.id);
@@ -242,23 +274,52 @@ function NewExpenseForm({ group, me }: { group: GroupDetail; me: User }) {
     e.preventDefault();
     setChecked(true);
     setError(null);
-    if (amount === null || chosen.length === 0) return;
+    // A photo that couldn't be read must be replaced or taken out first, not dropped unseen.
+    if (amount === null || chosen.length === 0 || draft.busy || draft.error !== null) return;
     setBusy(true);
+    let id = savedId;
     try {
-      await api(`/api/groups/${encodeURIComponent(group.id)}/expenses`, {
-        description,
-        amount,
-        paidBy,
-        date,
-        splitMethod: "equal",
-        participants: chosen,
-      });
+      if (!id) {
+        const { expense } = await api<{ expense: Expense }>(`/api/groups/${encodeURIComponent(group.id)}/expenses`, {
+          description,
+          amount,
+          paidBy,
+          date,
+          splitMethod: "equal",
+          participants: chosen,
+        });
+        id = expense.id;
+      }
+      if (draft.photo) await apiUpload(receiptBase(group.id, id), draft.photo);
       route(back, true);
     } catch (err) {
+      setSavedId(id);
       setError(err);
       setBusy(false);
     }
   }
+
+  if (savedId)
+    return (
+      <Page title={t("expenseNew.title")}>
+        <p class="muted">{group.name}</p>
+        <form class="form" onSubmit={submit}>
+          <p>{t("expenseNew.photoFailed")}</p>
+          <PhotoField draft={draft} disabled={busy} />
+          {error !== null && <ErrorMessage>{errorText(error)}</ErrorMessage>}
+          <div class="actions">
+            {draft.photo && (
+              <button type="submit" class="button" disabled={busy || draft.busy}>
+                {t("expenseNew.retryPhoto")}
+              </button>
+            )}
+            <a class="button secondary" href={back}>
+              {t("expenseNew.backToGroup")}
+            </a>
+          </div>
+        </form>
+      </Page>
+    );
 
   return (
     <Page title={t("expenseNew.title")}>
@@ -323,9 +384,10 @@ function NewExpenseForm({ group, me }: { group: GroupDetail; me: User }) {
           ))}
           {checked && chosen.length === 0 && <small class="error">{t("expenseNew.pickSomeone")}</small>}
         </fieldset>
+        <PhotoField draft={draft} disabled={busy} />
         {error !== null && <ErrorMessage>{errorText(error)}</ErrorMessage>}
         <div class="actions">
-          <button type="submit" class="button" disabled={busy}>
+          <button type="submit" class="button" disabled={busy || draft.busy}>
             {t("expenseNew.submit")}
           </button>
           <a class="button secondary" href={back}>

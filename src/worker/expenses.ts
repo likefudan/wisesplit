@@ -88,12 +88,14 @@ interface ExpenseRow {
   created_by: string;
   created_at: string;
   shares: string;
+  receipt: string | null;
 }
 
 const EXPENSE_SELECT = `SELECT e.id, e.description, e.amount, e.paid_by, p.name AS paid_by_name, e.date,
     e.split_method, e.created_by, e.created_at,
     (SELECT json_group_array(json_object('userId', s.user_id, 'name', u.name, 'amount', s.amount))
-      FROM expense_shares s JOIN users u ON u.id = s.user_id WHERE s.expense_id = e.id) AS shares
+      FROM expense_shares s JOIN users u ON u.id = s.user_id WHERE s.expense_id = e.id) AS shares,
+    (SELECT r.id FROM receipts r WHERE r.expense_id = e.id) AS receipt
   FROM expenses e JOIN users p ON p.id = e.paid_by`;
 
 const ORDER = "ORDER BY e.date DESC, e.created_at DESC, e.id DESC";
@@ -109,6 +111,7 @@ const toExpense = (r: ExpenseRow): Expense => ({
   shares: (JSON.parse(r.shares) as Share[]).sort((a, b) => (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0)),
   createdBy: r.created_by,
   createdAt: r.created_at,
+  receipt: r.receipt,
 });
 
 export async function expenseById(env: Env, groupId: string, id: string): Promise<Expense | null> {
