@@ -17,9 +17,12 @@ async function adminPage(browser: Browser) {
   const page = await (await browser.newContext()).newPage();
   await signIn(page, ADMIN, "Admin");
   await page.goto("/");
-  const signup = page.getByRole("button", { name: "Sign up" });
-  if (await signup.isVisible()) await signup.click();
-  await expect(page.getByRole("heading", { name: /^Hi, / })).toBeVisible();
+  // The first test to get here signs the admin up; later ones find them signed up already.
+  const signedUp = page.getByRole("heading", { name: /^Hi, / });
+  const signupForm = page.getByRole("heading", { name: "Sign up" });
+  await expect(signedUp.or(signupForm)).toBeVisible();
+  if (await signupForm.isVisible()) await page.getByRole("button", { name: "Sign up" }).click();
+  await expect(signedUp).toBeVisible();
   return page;
 }
 
