@@ -1,3 +1,4 @@
+import type { InviteInfo } from "../shared/groups";
 import type { Lang } from "../shared/i18n";
 import { type SessionRow, type UserRow, userByGoogle } from "./auth";
 import type { Env } from "./env";
@@ -30,7 +31,7 @@ const VOUCHED = `EXISTS (SELECT 1 FROM group_members m JOIN users u ON u.id = m.
 // Bound as [tokenHash, now]: the invite can still be used.
 const USABLE = `token_hash = ? AND used_at IS NULL AND expires_at > ? AND ${VOUCHED}`;
 
-export type InviteState = "valid" | "used" | "expired" | "revoked";
+export type InviteState = InviteInfo["state"];
 
 /**
  * The invite for a link's token, with its group's name, the name of the member who made it, and
