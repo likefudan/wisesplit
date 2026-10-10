@@ -54,7 +54,7 @@ async function login(
     return Response.json({ id_token: token });
   });
   const response = await get(`/api/auth/google/callback?state=${start.state}&code=valid-code`, start.cookie);
-  const cookie = response.headers.get("Set-Cookie")?.match(/ws_session=[^;,]+/)?.[0] ?? "";
+  const cookie = response.headers.get("Set-Cookie")?.match(/__Host-ws_session=[^;,]+/)?.[0] ?? "";
   return { response, cookie, start };
 }
 
@@ -69,7 +69,7 @@ describe("Google sign-in", () => {
     expect(url.searchParams.get("nonce")).toBeTruthy();
     expect(url.searchParams.get("redirect_uri")).toBe(`${ORIGIN}/api/auth/google/callback`);
     expect(url.searchParams.get("client_secret")).toBeNull();
-    expect(cookie).toMatch(/^ws_oauth_[\w-]{16}=/);
+    expect(cookie).toMatch(/^__Host-ws_oauth_[\w-]{16}=/);
   });
 
   it("says so when Google sign-in is not set up", async () => {
@@ -93,7 +93,7 @@ describe("Google sign-in", () => {
       user: null,
     });
     // The sign-in in progress is used up.
-    expect(response.headers.getSetCookie().some((h) => /^ws_oauth_[\w-]{16}=;/.test(h))).toBe(true);
+    expect(response.headers.getSetCookie().some((h) => /^__Host-ws_oauth_[\w-]{16}=;/.test(h))).toBe(true);
   });
 
   it("refuses a sign-in in progress that has run out or was tampered with", async () => {
@@ -104,7 +104,7 @@ describe("Google sign-in", () => {
       `${name}=${btoa(JSON.stringify({ ...pending, expires: Date.now() - 1 }))}`,
       `${name}=not-json`,
       // Another sign-in's cookie doesn't count for this one.
-      `ws_oauth_someone-elses-st=${value}`,
+      `__Host-ws_oauth_someone-elses-st=${value}`,
       "",
     ]) {
       const res = await get(`/api/auth/google/callback?state=${start.state}&code=c`, cookie);
@@ -140,6 +140,21 @@ describe("Google sign-in", () => {
     const res = await get(`/api/auth/google/callback?state=${first.state}&error=access_denied`, first.cookie);
     // Past the state check: the first tab's sign-in is still its own.
     expect(res.headers.get("Location")).toBe("/login?error=cancelled");
+  });
+
+  it("drops the oldest abandoned sign-ins so their cookies don't pile up", async () => {
+    const pending = (name: string, minutes: number) =>
+      `__Host-ws_oauth_${name}=${btoa(JSON.stringify({ state: name, nonce: "n", verifier: "v", next: "/", expires: Date.now() + minutes * 60_000 })).replace(/=+$/, "")}`;
+    const res = await get(
+      "/api/auth/google",
+      [pending("oldest", 1), pending("newer", 5), pending("newest", 9)].join("; "),
+    );
+    const dropped = res.headers
+      .getSetCookie()
+      .filter((h) => /^__Host-ws_oauth_\w+=;/.test(h))
+      .map((h) => h.split("=")[0]);
+    // Two kept beside the new one; the oldest goes.
+    expect(dropped).toEqual(["__Host-ws_oauth_oldest"]);
   });
 
   it("refuses a callback whose state does not match this browser's", async () => {
@@ -178,7 +193,7 @@ describe("Google sign-in", () => {
     const { cookie } = await login({}, { sub: "logout-test" });
     const res = await send("/api/auth/logout", { body: {}, cookie });
     expect(res.status).toBe(204);
-    expect(res.headers.get("Set-Cookie")).toMatch(/ws_session=;/);
+    expect(res.headers.get("Set-Cookie")).toMatch(/__Host-ws_session=;/);
     expect((await json(await get("/api/auth/session", cookie))).identity).toBeNull();
   });
 });

@@ -56,7 +56,8 @@ export function publicUser(env: Env, user: UserRow): PublicUser {
   };
 }
 
-const alreadyRegistered = () => new HttpError(409, "already_registered", "This Google account has already signed up");
+export const alreadyRegistered = () =>
+  new HttpError(409, "already_registered", "This Google account has already signed up");
 
 /**
  * Signs up the Google identity of `session` (`existing` null), or re-applies after a rejection

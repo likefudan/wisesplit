@@ -31,7 +31,14 @@ export interface UserRow {
 /** Hono's types for routes behind `requireApproved`: `c.get("user")` is the signed-in, approved user. */
 export type AppEnv = { Bindings: Env; Variables: { user: UserRow } };
 
-export const SESSION_COOKIE = "ws_session";
+/**
+ * A cookie's name on this site. Over HTTPS it carries the __Host- prefix, which browsers only accept
+ * from this exact host (Secure, Path=/, no Domain), so another *.llmat.dev site can't plant one.
+ * Plain http is a developer's localhost, where the prefix can't be used.
+ */
+export const cookieName = (c: Context<any>, base: string) =>
+  new URL(c.req.url).protocol === "https:" ? `__Host-${base}` : base;
+const sessionCookie = (c: Context<any>) => cookieName(c, "ws_session");
 const SESSION_DAYS = 30;
 
 export const cookieOptions = (c: Context<any>) => ({
@@ -46,7 +53,7 @@ export const cookieOptions = (c: Context<any>) => ({
 export async function startSession<E extends { Bindings: Env }>(c: Context<E>, identity: SessionRow): Promise<void> {
   const raw = randomToken();
   const expires = new Date(Date.now() + SESSION_DAYS * 86400_000);
-  const old = getCookie(c, SESSION_COOKIE);
+  const old = getCookie(c, sessionCookie(c));
   await c.env.DB.batch([
     c.env.DB.prepare("DELETE FROM sessions WHERE expires_at < ? OR id_hash = ?").bind(
       now(),
@@ -70,16 +77,16 @@ export async function startSession<E extends { Bindings: Env }>(c: Context<E>, i
       identity.google_sub,
     ),
   ]);
-  setCookie(c, SESSION_COOKIE, raw, { ...cookieOptions(c), expires });
+  setCookie(c, sessionCookie(c), raw, { ...cookieOptions(c), expires });
 }
 
 export async function endSession<E extends { Bindings: Env }>(c: Context<E>): Promise<void> {
-  const raw = getCookie(c, SESSION_COOKIE);
+  const raw = getCookie(c, sessionCookie(c));
   if (raw)
     await c.env.DB.prepare("DELETE FROM sessions WHERE id_hash = ?")
       .bind(await sha256(raw))
       .run();
-  deleteCookie(c, SESSION_COOKIE, cookieOptions(c));
+  deleteCookie(c, sessionCookie(c), cookieOptions(c));
 }
 
 /**
@@ -93,7 +100,7 @@ export async function endSession<E extends { Bindings: Env }>(c: Context<E>): Pr
 export async function signedIn<E extends { Bindings: Env }>(
   c: Context<E>,
 ): Promise<{ session: SessionRow | null; user: UserRow | null }> {
-  const raw = getCookie(c, SESSION_COOKIE);
+  const raw = getCookie(c, sessionCookie(c));
   if (!raw) return { session: null, user: null };
   const row = await c.env.DB.prepare(
     `SELECT s.google_sub AS s_sub, s.email AS s_email, s.name AS s_name, s.picture AS s_picture, u.*
@@ -130,7 +137,11 @@ export function isAdminEmail(env: Env, email: string): boolean {
   return admins.includes(email.trim().toLowerCase());
 }
 
-/** An admin is an approved user with an admin email; deactivating one takes the console away too. */
+/**
+ * An admin is an approved user with an admin email. Admins can't be rejected or deactivated (the
+ * console refuses, and signedIn() re-approves them): removing the email from ADMIN_EMAILS is how
+ * someone stops being one.
+ */
 export const isAdmin = (env: Env, user: Pick<UserRow, "email" | "status">) =>
   user.status === "approved" && isAdminEmail(env, user.email);
 

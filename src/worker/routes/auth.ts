@@ -1,15 +1,18 @@
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import { cookieOptions, endSession, type SessionRow, signedIn, startSession } from "../auth";
+import { cookieName, cookieOptions, endSession, type SessionRow, signedIn, startSession } from "../auth";
 import type { Env } from "../env";
 import { HttpError, readJson, str } from "../http";
 import { fromBase64Url, pkceChallenge, randomToken, timingSafeEqual, toBase64Url } from "../lib/crypto";
 import { turnstileConfigured, verifyTurnstile } from "../turnstile";
-import { googleName, parseLang, parseName, publicUser, register } from "../users";
+import { alreadyRegistered, googleName, parseLang, parseName, publicUser, register } from "../users";
 
 /** One cookie per sign-in in progress, named by its state, so two tabs signing in don't clash. */
-const stateCookie = (state: string) => `ws_oauth_${state.slice(0, 16)}`;
+const STATE_PREFIX = "ws_oauth_";
+const stateCookie = (c: Context, state: string) => cookieName(c, `${STATE_PREFIX}${state.slice(0, 16)}`);
+/** Sign-ins in progress kept at once; older abandoned ones are dropped so cookies don't pile up. */
+const MAX_PENDING_SIGNINS = 3;
 const STATE_MINUTES = 10;
 const googleKeys = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
 
@@ -89,8 +92,13 @@ authRoutes.get("/google", async (c) => {
     next: safeNext(c.req.query("next")),
     expires: Date.now() + STATE_MINUTES * 60_000,
   };
+  const prefix = cookieName(c, STATE_PREFIX);
+  const others = Object.entries(getCookie(c))
+    .filter(([name]) => name.startsWith(prefix))
+    .sort(([, a], [, b]) => (readPending(b)?.expires ?? 0) - (readPending(a)?.expires ?? 0));
+  for (const [name] of others.slice(MAX_PENDING_SIGNINS - 1)) deleteCookie(c, name, cookieOptions(c));
   const value = toBase64Url(new TextEncoder().encode(JSON.stringify(pending)));
-  setCookie(c, stateCookie(pending.state), value, { ...cookieOptions(c), maxAge: STATE_MINUTES * 60 });
+  setCookie(c, stateCookie(c, pending.state), value, { ...cookieOptions(c), maxAge: STATE_MINUTES * 60 });
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   url.search = new URLSearchParams({
     client_id: c.env.GOOGLE_CLIENT_ID!,
@@ -109,9 +117,9 @@ authRoutes.get("/google", async (c) => {
 authRoutes.get("/google/callback", async (c) => {
   const state = c.req.query("state") ?? "";
   if (!/^[\w-]{43}$/.test(state)) return c.redirect("/login?error=invalid_state");
-  const saved = readPending(getCookie(c, stateCookie(state)));
+  const saved = readPending(getCookie(c, stateCookie(c, state)));
   // Used up whatever happens next: one sign-in per visit to Google.
-  deleteCookie(c, stateCookie(state), cookieOptions(c));
+  deleteCookie(c, stateCookie(c, state), cookieOptions(c));
   if (!googleEnabled(c.env) || !saved || !timingSafeEqual(state, saved.state))
     return c.redirect("/login?error=invalid_state");
   if (c.req.query("error")) return c.redirect("/login?error=cancelled");
@@ -161,7 +169,7 @@ authRoutes.get("/google/callback", async (c) => {
     return c.redirect("/login?error=failed");
   }
   await startSession(c, identity);
-  return c.redirect(saved.next);
+  return c.redirect(safeNext(saved.next));
 });
 
 // Sign-up, and re-applying after a rejection: the display name, the language the page is in, and
@@ -169,8 +177,7 @@ authRoutes.get("/google/callback", async (c) => {
 authRoutes.post("/register", async (c) => {
   const { session, user: existing } = await signedIn(c);
   if (!session) throw new HttpError(401, "login_required", "Sign in with Google first");
-  if (existing && existing.status !== "rejected")
-    throw new HttpError(409, "already_registered", "This Google account has already signed up");
+  if (existing && existing.status !== "rejected") throw alreadyRegistered();
   const body = await readJson(c.req.raw);
   const name = parseName(body.name);
   const lang = parseLang(body.lang);

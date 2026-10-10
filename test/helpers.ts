@@ -64,7 +64,7 @@ export async function signIn(email: string, sub = `sub-${email}`, name = "Test U
       new Date(Date.now() + 3600_000).toISOString(),
     )
     .run();
-  return `ws_session=${token}`;
+  return `__Host-ws_session=${token}`;
 }
 
 /** A user in the given state with a signed-in browser. */
