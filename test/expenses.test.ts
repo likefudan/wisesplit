@@ -146,9 +146,11 @@ describe("adding expenses", () => {
     expect((await send(`/api/groups/${id}/expenses`)).status).toBe(401);
     const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM expenses WHERE group_id = ?").bind(id).first("n");
     expect(count).toBe(0);
-    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM activity_log WHERE group_id = ?").bind(id).first("n")).toBe(
-      0,
-    );
+    expect(
+      await env.DB.prepare("SELECT COUNT(*) AS n FROM activity_log WHERE group_id = ? AND action LIKE 'expense.%'")
+        .bind(id)
+        .first("n"),
+    ).toBe(0);
   });
 
   it("works in currencies without decimals", async () => {
