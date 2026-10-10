@@ -72,6 +72,15 @@ describe("Google sign-in", () => {
     expect(cookie).toMatch(/^__Host-ws_oauth_[\w-]{16}=/);
   });
 
+  it("starts on the site's own address, where Google will come back to", async () => {
+    const res = await send("/api/auth/google?next=%2Fprofile", {
+      env: { ...GOOGLE, SITE_ORIGIN: "https://real.example" },
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("https://real.example/api/auth/google?next=%2Fprofile");
+    expect(res.headers.get("Set-Cookie")).toBeNull();
+  });
+
   it("says so when Google sign-in is not set up", async () => {
     const res = await send("/api/auth/google");
     expect(res.headers.get("Location")).toBe("/login?error=not_configured");

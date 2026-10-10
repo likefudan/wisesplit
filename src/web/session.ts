@@ -36,8 +36,8 @@ export async function refreshSession(): Promise<void> {
     if (data.user?.status !== "approved") return;
     // A language picked before it could be saved (while loading, or before approval) is the
     // newest choice: save it. Otherwise the language saved in the profile wins over this browser's.
-    const choice = unsavedChoice;
-    unsavedChoice = null;
+    const choice = unsaved.get();
+    unsaved.set(null);
     if (choice && choice !== data.user.lang) chooseLang(choice);
     else if (data.user.lang !== currentLang()) setLang(data.user.lang);
   } catch (e) {
@@ -61,7 +61,27 @@ export function useSession(): SessionState {
 }
 
 let langSaves: Promise<void> = Promise.resolve();
-let unsavedChoice: Lang | null = null;
+// A language picked when it could not be saved to the profile (loading, offline, before approval),
+// kept in this browser until it can be.
+const UNSAVED = "lang-unsaved";
+const unsaved = {
+  get: (): Lang | null => {
+    try {
+      const v = localStorage.getItem(UNSAVED);
+      return v === "en" || v === "zh" ? v : null;
+    } catch {
+      return null;
+    }
+  },
+  set: (lang: Lang | null) => {
+    try {
+      if (lang) localStorage.setItem(UNSAVED, lang);
+      else localStorage.removeItem(UNSAVED);
+    } catch {
+      // Blocked storage: the choice still applies to this page.
+    }
+  },
+};
 
 /**
  * Switches the pages' language. Signed-in users keep the choice in their profile, so it follows
@@ -71,14 +91,16 @@ let unsavedChoice: Lang | null = null;
 export function chooseLang(next: Lang) {
   setLang(next);
   if (current.state !== "ok" || current.data.user?.status !== "approved") {
-    unsavedChoice = next;
+    unsaved.set(next);
     return;
   }
   langSaves = langSaves.then(async () => {
     try {
       setUser((await api<{ user: User }>("/api/me", { lang: next })).user);
+      unsaved.set(null);
     } catch {
-      // The page has switched anyway; the profile keeps the old one until the next change.
+      // The page has switched anyway; save it to the profile on the next visit.
+      unsaved.set(next);
     }
   });
 }

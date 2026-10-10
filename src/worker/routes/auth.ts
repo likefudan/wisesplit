@@ -89,6 +89,11 @@ function readPending(cookie: string | undefined): PendingSignIn | null {
 // Starts Google sign-in: Authorization Code with PKCE, a random state and a nonce.
 authRoutes.get("/google", async (c) => {
   if (!googleEnabled(c.env)) return c.redirect(loginError("not_configured"));
+  // Google comes back to SITE_ORIGIN, so the sign-in must start there for its cookie to be found
+  // (e.g. 127.0.0.1 versus localhost, or a workers.dev address).
+  const site = new URL(c.env.SITE_ORIGIN).origin;
+  const here = new URL(c.req.url);
+  if (here.origin !== site) return c.redirect(site + here.pathname + here.search);
   const pending: PendingSignIn = {
     state: randomToken(),
     nonce: randomToken(),
