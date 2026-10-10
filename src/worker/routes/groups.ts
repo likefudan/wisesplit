@@ -1,7 +1,19 @@
 import { Hono } from "hono";
 import { INVITE_DAYS, MAX_OPEN_INVITES } from "../../shared/groups";
 import { type AppEnv, requireApproved } from "../auth";
-import { groupDetail, groupForMember, groupsOf, mayDelete, mayLeave, parseCurrency, parseGroupName } from "../groups";
+import {
+  groupDetail,
+  groupForMember,
+  groupsOf,
+  isMember,
+  MAY_NOT_LEAVE_SQL,
+  mayNotLeaveArgs,
+  parseCurrency,
+  parseGroupName,
+  UNSETTLED_SQL,
+  unsettledArgs,
+} from "../groups";
+import { expenseRoutes } from "./expenses";
 import type { Env } from "../env";
 import { HttpError, now, readJson, str } from "../http";
 import { randomId, randomToken, sha256 } from "../lib/crypto";
@@ -9,6 +21,8 @@ import { randomId, randomToken, sha256 } from "../lib/crypto";
 /** Groups, their members, and invites (the invite links themselves are used in routes/invites.ts). */
 export const groupRoutes = new Hono<AppEnv>();
 groupRoutes.use("*", requireApproved);
+// Expenses and balances: /:id/expenses, /:id/balances.
+groupRoutes.route("/:id", expenseRoutes);
 
 const notSettled = () => new HttpError(409, "group_not_settled", "Everyone in the group must be settled up first");
 const userNotFound = () => new HttpError(404, "user_not_found", "No approved user has this email");
@@ -82,20 +96,22 @@ groupRoutes.post("/:id/members", async (c) => {
 });
 
 /**
- * Takes someone out of a group, with the invite links they made for it that are still unused: a
- * link stops working with its maker (src/worker/invites.ts), and stays dead if they come back.
+ * Takes someone out of a group, if they may go (`MAY_NOT_LEAVE_SQL`), with the invite links they
+ * made for it that are still unused: a link stops working with its maker (src/worker/invites.ts),
+ * and stays dead if they come back. Whether they were taken out.
  */
-const removeMember = (env: Env, groupId: string, userId: string) =>
-  env.DB.batch([
-    env.DB.prepare("DELETE FROM group_members WHERE group_id = ? AND user_id = ? RETURNING user_id").bind(
-      groupId,
-      userId,
-    ),
-    env.DB.prepare("DELETE FROM group_invites WHERE group_id = ? AND created_by = ? AND used_at IS NULL").bind(
-      groupId,
-      userId,
-    ),
+async function removeMember(env: Env, groupId: string, userId: string): Promise<boolean> {
+  const [removed] = await env.DB.batch([
+    env.DB.prepare(
+      `DELETE FROM group_members WHERE group_id = ? AND user_id = ? AND NOT ${MAY_NOT_LEAVE_SQL} RETURNING user_id`,
+    ).bind(groupId, userId, ...mayNotLeaveArgs(groupId, userId)),
+    env.DB.prepare(
+      `DELETE FROM group_invites WHERE group_id = ? AND created_by = ? AND used_at IS NULL
+         AND NOT EXISTS (SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?)`,
+    ).bind(groupId, userId, groupId, userId),
   ]);
+  return !!removed?.results.length;
+}
 
 // The owner removes someone else.
 groupRoutes.post("/:id/members/:userId/remove", async (c) => {
@@ -104,9 +120,10 @@ groupRoutes.post("/:id/members/:userId/remove", async (c) => {
   const userId = c.req.param("userId");
   if (group.owner_id !== me.id) throw ownerOnly();
   if (userId === me.id) throw new HttpError(400, "owner_cannot_leave", "The owner can't leave the group");
-  if (!(await mayLeave(c.env, group.id, userId))) throw notSettled();
-  const [removed] = await removeMember(c.env, group.id, userId);
-  if (!removed?.results.length) throw new HttpError(404, "not_a_member", "Not in this group");
+  if (!(await removeMember(c.env, group.id, userId))) {
+    if (await isMember(c.env, group.id, userId)) throw notSettled();
+    throw new HttpError(404, "not_a_member", "Not in this group");
+  }
   return c.json({ group: await groupDetail(c.env, group) });
 });
 
@@ -114,18 +131,25 @@ groupRoutes.post("/:id/leave", async (c) => {
   const me = c.get("user");
   const group = await groupForMember(c.env, c.req.param("id"), me.id);
   if (group.owner_id === me.id) throw new HttpError(400, "owner_cannot_leave", "The owner can't leave the group");
-  if (!(await mayLeave(c.env, group.id, me.id))) throw notSettled();
-  await removeMember(c.env, group.id, me.id);
+  // Not taken out and still there: not settled. (Gone anyway: removed meanwhile, which is fine.)
+  if (!(await removeMember(c.env, group.id, me.id)) && (await isMember(c.env, group.id, me.id))) throw notSettled();
   return c.body(null, 204);
 });
 
-// Deletes the group with its members and invites (and, from PR 3 on, its records).
+// Deletes the group, once settled up, with its members, invites, expenses and activity log.
 groupRoutes.post("/:id/delete", async (c) => {
   const me = c.get("user");
   const group = await groupForMember(c.env, c.req.param("id"), me.id);
   if (group.owner_id !== me.id) throw ownerOnly();
-  if (!(await mayDelete(c.env, group.id))) throw notSettled();
-  await c.env.DB.prepare("DELETE FROM groups WHERE id = ? AND owner_id = ?").bind(group.id, me.id).run();
+  const deleted = await c.env.DB.prepare(
+    `DELETE FROM groups WHERE id = ? AND owner_id = ? AND NOT ${UNSETTLED_SQL} RETURNING id`,
+  )
+    .bind(group.id, me.id, ...unsettledArgs(group.id))
+    .first();
+  if (!deleted) {
+    await groupForMember(c.env, group.id, me.id); // deleted meanwhile: 404
+    throw notSettled();
+  }
   return c.body(null, 204);
 });
 

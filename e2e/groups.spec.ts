@@ -43,7 +43,7 @@ async function createGroup(page: Page, name: string, currency: string) {
   await expect(page.getByRole("heading", { name })).toBeVisible();
 }
 
-const member = (page: Page, name: string) => page.getByRole("listitem").filter({ hasText: name });
+const member = (page: Page, name: string) => page.locator(".user-row").filter({ hasText: name });
 
 test("create a group, add a friend by email, and they can leave", async ({ browser }) => {
   const ownerEmail = unique("owner");
@@ -136,4 +136,58 @@ test("someone already signed up joins through an invite link with one click", as
   await expect(friend.getByRole("heading", { name: "Book club" })).toBeVisible();
   await owner.reload();
   await expect(member(owner, "Joiner Jo")).toBeVisible();
+});
+
+test("add expenses, see who owes whom, and leave once settled", async ({ browser }) => {
+  const owner = await approvedUser(browser, unique("payer"), "Payer Pat");
+  const friendEmail = unique("sharer");
+  const friend = await approvedUser(browser, friendEmail, "Sharer Sam");
+  await createGroup(owner, "Road trip", "USD");
+  await owner.getByLabel("Their Google email").fill(friendEmail);
+  await owner.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(owner.getByText("Sharer Sam was added.")).toBeVisible();
+  await expect(owner.getByText("No expenses yet.")).toBeVisible();
+
+  // 30.01 split equally: one of them pays the extra cent, and the form shows each share as it's typed.
+  await owner.getByRole("link", { name: "Add expense" }).click();
+  await owner.getByLabel("Description").fill("Gas");
+  await owner.getByLabel("Amount (USD)").fill("abc");
+  await owner.getByRole("button", { name: "Save expense" }).click();
+  await expect(owner.getByText("Enter an amount such as 12.50.")).toBeVisible();
+  await owner.getByLabel("Amount (USD)").fill("30.01");
+  await expect(owner.getByText("$15.01")).toBeVisible();
+  await expect(owner.getByText("$15.00")).toBeVisible();
+  await owner.getByLabel("Date").fill("2026-10-03");
+  await owner.getByRole("button", { name: "Save expense" }).click();
+
+  await expect(owner.getByRole("heading", { name: "Road trip" })).toBeVisible();
+  const gas = owner.getByRole("listitem").filter({ hasText: "Gas" });
+  await expect(gas).toContainText("Oct 3, 2026 · Payer Pat paid $30.01");
+  await expect(gas).toContainText(/you lent \$15\.0[01]/);
+  const balance = (page: Page, name: string) => page.locator(".balance-row").filter({ hasText: name });
+  await expect(balance(owner, "Payer Pat")).toContainText(/gets back \$15\.0[01]/);
+  await expect(balance(owner, "Sharer Sam")).toContainText(/owes \$15\.0[01]/);
+
+  // The friend owes money, so can't leave yet.
+  await friend.goto("/");
+  await friend.getByRole("link", { name: /Road trip/ }).click();
+  await expect(friend.getByRole("listitem").filter({ hasText: "Gas" })).toContainText(/you borrowed \$15\.0[01]/);
+  friend.once("dialog", (d) => d.accept());
+  await friend.getByRole("button", { name: "Leave group" }).click();
+  await expect(friend.getByRole("alert")).toContainText("Everyone in the group needs to be settled up first.");
+
+  // An expense paid by the friend, for the owner only, evens it up (in Chinese this time).
+  await friend.getByRole("button", { name: "中文" }).click();
+  await friend.getByRole("link", { name: "记一笔" }).click();
+  await friend.getByLabel("说明").fill("还油钱");
+  const owed = (await balance(owner, "Sharer Sam").textContent())!.match(/\$(\d+\.\d\d)/)![1]!;
+  await friend.getByLabel("金额（USD）").fill(owed);
+  await friend.getByLabel("付款人").selectOption({ label: "Sharer Sam (你)" });
+  await friend.getByRole("checkbox", { name: "Sharer Sam" }).uncheck();
+  await friend.getByRole("button", { name: "保存" }).click();
+  await expect(balance(friend, "Sharer Sam")).toContainText("已结清");
+  await expect(balance(friend, "Payer Pat")).toContainText("已结清");
+  friend.once("dialog", (d) => d.accept());
+  await friend.getByRole("button", { name: "退出群组" }).click();
+  await expect(friend.getByRole("heading", { name: "你好，Sharer Sam！" })).toBeVisible();
 });

@@ -48,19 +48,34 @@ export const isMember = async (env: Env, groupId: string, userId: string) =>
     .first());
 
 /**
- * Whether `userId` may leave or be removed from the group now. The rule (docs/mvp-scope.md §2): a
- * member with any expense involving them may go only once the whole group is settled (every
- * balance 0, no payment awaiting confirmation); one with no such expense may go any time.
- * There are no expenses yet, so everyone may go: PR 3 adds balances here, PR 7 pending payments.
+ * SQL that is true while group ? is not settled up: someone's balance in it is not 0. Binds the
+ * group id twice. (PR 7 adds: or a payment in it awaits confirmation.)
  */
-export async function mayLeave(_env: Env, _groupId: string, _userId: string): Promise<boolean> {
-  return true;
-}
+export const UNSETTLED_SQL = `EXISTS (SELECT 1 FROM (
+    SELECT paid_by AS user_id, amount AS net FROM expenses WHERE group_id = ?
+    UNION ALL
+    SELECT s.user_id, -s.amount FROM expense_shares s JOIN expenses e ON e.id = s.expense_id WHERE e.group_id = ?
+  ) GROUP BY user_id HAVING SUM(net) != 0)`;
+export const unsettledArgs = (groupId: string) => [groupId, groupId];
 
-/** Whether the group may be deleted: only when fully settled, as in `mayLeave` (stub until PR 3). */
-export async function mayDelete(_env: Env, _groupId: string): Promise<boolean> {
-  return true;
-}
+/**
+ * SQL that is true while user ? may not leave group ? (or be removed from it). The rule
+ * (docs/mvp-scope.md §2): someone with any expense involving them, paid by them or shared by
+ * them, may go only once the whole group is settled; someone with none may go any time. Written
+ * as SQL so the check and the removal are one statement, and an expense added at the same moment
+ * can't slip in between.
+ */
+export const MAY_NOT_LEAVE_SQL = `((EXISTS (SELECT 1 FROM expenses WHERE group_id = ? AND paid_by = ?)
+    OR EXISTS (SELECT 1 FROM expense_shares s JOIN expenses e ON e.id = s.expense_id
+      WHERE e.group_id = ? AND s.user_id = ?))
+  AND ${UNSETTLED_SQL})`;
+export const mayNotLeaveArgs = (groupId: string, userId: string) => [
+  groupId,
+  userId,
+  groupId,
+  userId,
+  ...unsettledArgs(groupId),
+];
 
 /** The groups `userId` is in, newest first. */
 export async function groupsOf(env: Env, userId: string): Promise<GroupSummary[]> {

@@ -344,3 +344,78 @@ h2 {
   background: var(--error);
   color: var(--surface);
 }
+
+.balance-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.balance-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+.expense-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.expense-summary::-webkit-details-marker {
+  display: none;
+}
+
+.expense-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.expense-status {
+  flex: none;
+  max-width: 45%;
+  text-align: right;
+}
+
+.expense-shares {
+  margin-top: 8px;
+}
+
+.expense-shares ul {
+  margin: 4px 0 0;
+  padding-left: 20px;
+}
+
+.list-more {
+  margin-top: 12px;
+}
+
+.participants {
+  border: none;
+  margin: 0;
+  padding: 0;
+  gap: 10px;
+}
+
+.participants legend {
+  font-weight: 600;
+  padding: 0;
+  margin-bottom: 6px;
+}
+
+.participant-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
