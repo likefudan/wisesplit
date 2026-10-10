@@ -22,15 +22,24 @@ type Person = { id: string; cookie: string };
 function addExpense(
   groupId: string,
   by: Person,
-  fields: { amount: number; paidBy: Person; participants: Person[]; description?: string; date?: string },
+  fields: {
+    amount: number;
+    paidBy: Person;
+    participants: Person[];
+    description?: string;
+    date?: string;
+    splitMethod?: string;
+    splitParams?: unknown;
+  },
 ) {
   return post(`/api/groups/${groupId}/expenses`, by.cookie, {
     description: fields.description ?? "Dinner",
     amount: fields.amount,
     paidBy: fields.paidBy.id,
     date: fields.date ?? "2026-10-01",
-    splitMethod: "equal",
+    splitMethod: fields.splitMethod ?? "equal",
     participants: fields.participants.map((p) => p.id),
+    splitParams: fields.splitParams,
   });
 }
 
@@ -111,8 +120,12 @@ describe("adding expenses", () => {
       [{ date: "2026-13-01" }, "invalid_date"],
       [{ date: "26-01-01" }, "invalid_date"],
       [{ date: "1969-12-31" }, "invalid_date"],
-      [{ splitMethod: "exact" }, "invalid_split_method"],
+      [{ splitMethod: "thirds" }, "invalid_split_method"],
       [{ splitMethod: undefined }, "invalid_split_method"],
+      [{ splitMethod: "exact" }, "invalid_split"],
+      [{ splitParams: { [ann.id]: 1200 } }, "invalid_split"],
+      [{ splitMethod: "shares", splitParams: [1, 1] }, "invalid_split"],
+      [{ splitMethod: "shares", splitParams: "1:1" }, "invalid_split"],
       [{ participants: [] }, "invalid_participants"],
       [{ participants: [ann.id, ann.id] }, "invalid_participants"],
       [{ participants: "everyone" }, "invalid_participants"],
@@ -156,6 +169,163 @@ describe("adding expenses", () => {
     const [ann, bob, cat] = people as [Person, Person, Person];
     const res = await addExpense(id, ann, { amount: 1000, paidBy: bob, participants: [ann, bob, cat] });
     expect((await json(res)).expense.shares.map((s: any) => s.amount).sort()).toEqual([333, 333, 334]);
+  });
+});
+
+describe("other split methods", () => {
+  it("takes exact amounts, keeps them as entered and logs them", async () => {
+    const { id, people } = await makeGroup(["Ann", "Bob", "Cat"]);
+    const [ann, bob, cat] = people as [Person, Person, Person];
+    const splitParams = { [ann.id]: 1000, [bob.id]: 2550, [cat.id]: 1 };
+    const res = await addExpense(id, bob, {
+      amount: 3551,
+      paidBy: ann,
+      participants: [ann, bob, cat],
+      splitMethod: "exact",
+      splitParams,
+    });
+    expect(res.status).toBe(200);
+    const { expense } = await json(res);
+    expect(expense).toMatchObject({ splitMethod: "exact", splitParams });
+    expect(Object.fromEntries(expense.shares.map((s: any) => [s.userId, s.amount]))).toEqual(splitParams);
+    expect(await balancesOf(id, cat)).toEqual({ [ann.id]: 2551, [bob.id]: -2550, [cat.id]: -1 });
+    const log = await env.DB.prepare("SELECT data FROM activity_log WHERE subject_id = ?")
+      .bind(expense.id)
+      .first<any>();
+    expect(JSON.parse(log.data)).toMatchObject({ splitMethod: "exact", splitParams, shares: splitParams });
+    // And they come back the same in the list, for an edit form to show again.
+    const list = await json(await send(`/api/groups/${id}/expenses`, { cookie: cat.cookie }));
+    expect(list.expenses[0]).toMatchObject({ splitMethod: "exact", splitParams });
+  });
+
+  it("refuses exact amounts that don't add up, or leave someone out", async () => {
+    const { id, people } = await makeGroup(["Ann", "Bob"]);
+    const [ann, bob] = people as [Person, Person];
+    for (const [splitParams, code] of [
+      [{ [ann.id]: 500, [bob.id]: 499 }, "split_exact_total"],
+      [{ [ann.id]: 500, [bob.id]: 501 }, "split_exact_total"],
+      [{ [ann.id]: 1000 }, "invalid_split"],
+      [{ [ann.id]: 1000, [bob.id]: 0 }, "invalid_split"],
+      [{ [ann.id]: 1100, [bob.id]: -100 }, "invalid_split"],
+      [{ [ann.id]: 500, [bob.id]: 500, nobody: 0 }, "invalid_split"],
+    ] as const) {
+      const res = await addExpense(id, ann, {
+        amount: 1000,
+        paidBy: ann,
+        participants: [ann, bob],
+        splitMethod: "exact",
+        splitParams,
+      });
+      expect(res.status, JSON.stringify(splitParams)).toBe(400);
+      expect((await json(res)).error.code, JSON.stringify(splitParams)).toBe(code);
+    }
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM expenses WHERE group_id = ?").bind(id).first("n")).toBe(0);
+  });
+
+  it("splits percentages, rounding by the largest remainder", async () => {
+    const { id, people } = await makeGroup(["Ann", "Bob", "Cat"]);
+    const [ann, bob, cat] = people as [Person, Person, Person];
+    const res = await addExpense(id, ann, {
+      amount: 1000,
+      paidBy: ann,
+      participants: [ann, bob, cat],
+      splitMethod: "percent",
+      splitParams: { [ann.id]: 5000, [bob.id]: 2500, [cat.id]: 2500 },
+    });
+    expect(await balancesOf(id, ann)).toEqual({ [ann.id]: 500, [bob.id]: -250, [cat.id]: -250 });
+    expect((await json(res)).expense.splitParams).toEqual({ [ann.id]: 5000, [bob.id]: 2500, [cat.id]: 2500 });
+    const bad = await addExpense(id, ann, {
+      amount: 1000,
+      paidBy: ann,
+      participants: [ann, bob],
+      splitMethod: "percent",
+      splitParams: { [ann.id]: 5000, [bob.id]: 4999 },
+    });
+    expect((await json(bad)).error.code).toBe("split_percent_total");
+  });
+
+  it("splits by shares, in yen too", async () => {
+    const { id, people } = await makeGroup(["Ann", "Bob", "Cat"], "JPY");
+    const [ann, bob, cat] = people as [Person, Person, Person];
+    const res = await addExpense(id, cat, {
+      amount: 1001,
+      paidBy: bob,
+      participants: [ann, bob, cat],
+      splitMethod: "shares",
+      splitParams: { [ann.id]: 2, [bob.id]: 1, [cat.id]: 1 },
+    });
+    expect(res.status).toBe(200);
+    // 1001 yen by 2:1:1 is 500.5, 250.25, 250.25: Ann's half yen is the largest remainder.
+    const shares = Object.fromEntries((await json(res)).expense.shares.map((s: any) => [s.userId, s.amount]));
+    expect(shares).toEqual({ [ann.id]: 501, [bob.id]: 250, [cat.id]: 250 });
+  });
+
+  it("splits the rest equally after adjustments, and refuses ones that can't work", async () => {
+    const { id, people } = await makeGroup(["Ann", "Bob", "Cat", "Wang"]);
+    const [ann, bob, cat, wang] = people as [Person, Person, Person, Person];
+    const all = [ann, bob, cat, wang];
+    // $100 among 4 with Wang paying $10 more: $22.50 each, $32.50 for Wang.
+    const res = await addExpense(id, ann, {
+      amount: 10000,
+      paidBy: ann,
+      participants: all,
+      splitMethod: "adjust",
+      splitParams: { [wang.id]: 1000 },
+    });
+    expect(res.status).toBe(200);
+    expect((await json(res)).expense).toMatchObject({ splitMethod: "adjust", splitParams: { [wang.id]: 1000 } });
+    expect(await balancesOf(id, ann)).toEqual({ [ann.id]: 7750, [bob.id]: -2250, [cat.id]: -2250, [wang.id]: -3250 });
+    for (const [splitParams, code] of [
+      [{ [wang.id]: 10001 }, "split_adjust_too_large"],
+      [{ [wang.id]: -4000 }, "split_adjust_negative"],
+      [{ [wang.id]: 0 }, "invalid_split"],
+      // Only for people sharing it.
+      [{ nobody: 100 }, "invalid_split"],
+    ] as const) {
+      const bad = await addExpense(id, ann, {
+        amount: 10000,
+        paidBy: ann,
+        participants: all,
+        splitMethod: "adjust",
+        splitParams,
+      });
+      expect(bad.status, JSON.stringify(splitParams)).toBe(400);
+      expect((await json(bad)).error.code, JSON.stringify(splitParams)).toBe(code);
+    }
+    // No adjustments at all is just an equal split.
+    const plain = await addExpense(id, ann, {
+      amount: 100,
+      paidBy: ann,
+      participants: [bob, cat],
+      splitMethod: "adjust",
+      splitParams: {},
+    });
+    expect((await json(plain)).expense).toMatchObject({ splitMethod: "adjust", splitParams: {} });
+  });
+
+  it("still checks everyone in the split is in the group", async () => {
+    const { id, people } = await makeGroup(["Ann", "Bob"]);
+    const [ann, bob] = people as [Person, Person];
+    const outsider = await makeUser("approved");
+    const res = await addExpense(id, ann, {
+      amount: 1000,
+      paidBy: ann,
+      participants: [bob, outsider],
+      splitMethod: "shares",
+      splitParams: { [bob.id]: 1, [outsider.id]: 1 },
+    });
+    expect((await json(res)).error.code).toBe("not_in_group");
+  });
+
+  it("stores no parameters for an equal split", async () => {
+    const { id, people } = await makeGroup(["Ann", "Bob"]);
+    const [ann, bob] = people as [Person, Person];
+    const res = await addExpense(id, ann, { amount: 100, paidBy: ann, participants: [ann, bob], splitParams: null });
+    const { expense } = await json(res);
+    expect(expense.splitParams).toBeNull();
+    expect(
+      await env.DB.prepare("SELECT split_params FROM expenses WHERE id = ?").bind(expense.id).first("split_params"),
+    ).toBeNull();
   });
 });
 

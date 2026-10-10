@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { amountInput, formatAmount, MAX_AMOUNT, parseAmount } from "../src/shared/money";
+import {
+  amountInput,
+  formatAmount,
+  formatPercent,
+  MAX_AMOUNT,
+  parseAdjustment,
+  parseAmount,
+  parseCount,
+  parsePercent,
+} from "../src/shared/money";
 
 describe("parseAmount", () => {
   it("reads amounts in the currency's smallest unit", () => {
@@ -60,5 +69,51 @@ describe("amountInput and formatAmount", () => {
     expect(formatAmount(-1250, "USD", "en")).toBe("-$12.50");
     expect(formatAmount(1250, "CNY", "zh")).toBe("¥12.50");
     expect(formatAmount(1200, "EUR", "en")).toBe("€12.00");
+  });
+});
+
+describe("parseAdjustment", () => {
+  it("reads more or less, in smallest units", () => {
+    expect(parseAdjustment("5", "USD")).toBe(500);
+    expect(parseAdjustment("+5.25", "USD")).toBe(525);
+    expect(parseAdjustment("-5", "USD")).toBe(-500);
+    expect(parseAdjustment(" − 1,000 ", "JPY")).toBe(-1000);
+    expect(parseAdjustment("－３", "CNY")).toBe(-300);
+    expect(parseAdjustment("0", "USD")).toBe(0);
+    expect(Object.is(parseAdjustment("-0", "USD"), 0)).toBe(true);
+    expect(parseAdjustment(`-${MAX_AMOUNT}`, "JPY")).toBe(-MAX_AMOUNT);
+  });
+
+  it("refuses what isn't an amount", () => {
+    for (const text of ["", "-", "+-5", "--5", "5-", "1.234", "abc", String(MAX_AMOUNT + 1)])
+      expect(parseAdjustment(text, text === String(MAX_AMOUNT + 1) ? "JPY" : "USD"), text).toBeNull();
+    expect(parseAdjustment("1.5", "JPY")).toBeNull();
+  });
+});
+
+describe("parsePercent and formatPercent", () => {
+  it("reads percentages in hundredths", () => {
+    expect(parsePercent("25")).toBe(2500);
+    expect(parsePercent("33.33")).toBe(3333);
+    expect(parsePercent("12.5%")).toBe(1250);
+    expect(parsePercent("０.０１％")).toBe(1);
+    expect(parsePercent("100")).toBe(10_000);
+    for (const text of ["", "0", "0.00", "100.01", "-5", "33.333", "%", "1e2"])
+      expect(parsePercent(text), text).toBeNull();
+  });
+
+  it("writes them back", () => {
+    expect(formatPercent(3333, "en")).toBe("33.33%");
+    expect(formatPercent(2500, "zh")).toBe("25%");
+    expect(formatPercent(1250, "en")).toBe("12.5%");
+  });
+});
+
+describe("parseCount", () => {
+  it("reads whole numbers up to the limit", () => {
+    expect(parseCount("2", 100)).toBe(2);
+    expect(parseCount(" ３ ", 100)).toBe(3);
+    expect(parseCount("100", 100)).toBe(100);
+    for (const text of ["", "0", "101", "1.5", "-1", "abc", "1e2"]) expect(parseCount(text, 100), text).toBeNull();
   });
 });

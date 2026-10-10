@@ -191,3 +191,74 @@ test("add expenses, see who owes whom, and leave once settled", async ({ browser
   await friend.getByRole("button", { name: "退出群组" }).click();
   await expect(friend.getByRole("heading", { name: "你好，Sharer Sam！" })).toBeVisible();
 });
+
+test("split by shares, exact amounts, adjustments and percentages", async ({ browser }) => {
+  const owner = await approvedUser(browser, unique("splitter"), "Split Sue");
+  const friendEmail = unique("splittee");
+  await approvedUser(browser, friendEmail, "Other Otto");
+  await createGroup(owner, "Ski week", "USD");
+  await owner.getByLabel("Their Google email").fill(friendEmail);
+  await owner.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(owner.getByText("Other Otto was added.")).toBeVisible();
+  const balance = owner.locator(".balance-row").filter({ hasText: "Split Sue" });
+
+  async function start(description: string, amount: string, method: string) {
+    await owner.getByRole("link", { name: "Add expense" }).click();
+    await owner.getByLabel("Description").fill(description);
+    await owner.getByLabel("Amount (USD)").fill(amount);
+    await owner.getByLabel("How to split").selectOption({ label: method });
+  }
+  const save = () => owner.getByRole("button", { name: "Save expense" }).click();
+
+  // $90 by shares, 2 to 1: each starts with one share.
+  await start("Cabin", "90", "By shares");
+  await expect(owner.getByLabel("Shares for Other Otto")).toHaveValue("1");
+  await owner.getByLabel("Shares for Split Sue").fill("2");
+  await expect(owner.getByText("$60.00")).toBeVisible();
+  await expect(owner.getByText("$30.00")).toBeVisible();
+  await save();
+  await expect(balance).toContainText("gets back $30.00");
+
+  // $50 in exact amounts, with a running tally.
+  await start("Lift passes", "50", "Exact amounts");
+  await owner.getByLabel("Amount for Split Sue").fill("20");
+  await expect(owner.getByText("$30.00 left to assign")).toBeVisible();
+  await owner.getByLabel("Amount for Other Otto").fill("35");
+  await expect(owner.getByText("$5.00 too much")).toBeVisible();
+  await save();
+  await expect(owner.getByText("$5.00 too much")).toHaveClass(/error/);
+  await owner.getByLabel("Amount for Other Otto").fill("30");
+  await expect(owner.getByText("Adds up to the total.")).toBeVisible();
+  await save();
+  await expect(balance).toContainText("gets back $60.00");
+
+  // $10 equally, but Otto pays $2 more; too much less shows at once.
+  await start("Snacks", "10", "Equally, with adjustments");
+  await owner.getByLabel("Adjustment for Other Otto").fill("-20");
+  await expect(owner.getByText("An adjustment leaves someone paying less than nothing.")).toBeVisible();
+  await owner.getByLabel("Adjustment for Other Otto").fill("2");
+  await expect(owner.getByText("$4.00")).toBeVisible();
+  await expect(owner.getByText("$6.00")).toBeVisible();
+  await save();
+  await expect(balance).toContainText("gets back $66.00");
+
+  // $100 by percentage; Otto left blank is left out, so it doesn't add up until he's in.
+  await start("Dinner", "100", "By percentage");
+  await owner.getByLabel("Percentage for Split Sue").fill("40");
+  await expect(owner.getByText("60% left to assign")).toBeVisible();
+  await owner.getByLabel("Percentage for Other Otto").fill("60");
+  await save();
+  await expect(balance).toContainText("gets back $126.00");
+
+  const dinner = owner.getByRole("listitem").filter({ hasText: "Dinner" });
+  await dinner.getByText("Dinner").click();
+  await expect(dinner).toContainText("Split by percentage:");
+  await expect(dinner).toContainText("Other Otto: $60.00 (60%)");
+  const cabin = owner.getByRole("listitem").filter({ hasText: "Cabin" });
+  await cabin.getByText("Cabin").click();
+  await expect(cabin).toContainText("Split Sue: $60.00 (2 shares)");
+  await expect(cabin).toContainText("Other Otto: $30.00 (1 share)");
+  const snacks = owner.getByRole("listitem").filter({ hasText: "Snacks" });
+  await snacks.getByText("Snacks").click();
+  await expect(snacks).toContainText("Other Otto: $6.00 (+$2.00)");
+});
