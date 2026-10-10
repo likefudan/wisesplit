@@ -119,6 +119,9 @@ export function ExpenseList({ group, me, onChange }: { group: GroupDetail; me: U
                 setExpenses((list) => (list ? list.filter((x) => x.id !== e.id) : list));
                 onChange();
               }}
+              onUpdated={(latest) =>
+                setExpenses((list) => (list ? list.map((x) => (x.id === e.id ? latest : x)) : list))
+              }
             />
           ))}
         </ul>
@@ -147,11 +150,13 @@ function ExpenseRow({
   group,
   me,
   onDeleted,
+  onUpdated,
 }: {
   expense: Expense;
   group: GroupDetail;
   me: User;
   onDeleted: () => void;
+  onUpdated: (latest: Expense) => void;
 }) {
   const { lang, t } = useI18n();
   const errorText = useErrorText();
@@ -173,16 +178,22 @@ function ExpenseRow({
     if (!confirm(t("expense.confirmDelete", { description: e.description }))) return;
     setBusy(true);
     setError(null);
+    const path = `/api/groups/${encodeURIComponent(group.id)}/expenses/${encodeURIComponent(e.id)}`;
     try {
-      await api(`/api/groups/${encodeURIComponent(group.id)}/expenses/${encodeURIComponent(e.id)}/delete`, {
-        version: e.version,
-      });
+      await api(`${path}/delete`, { version: e.version });
       onDeleted();
     } catch (err) {
-      // Already deleted by someone else: it goes from the list all the same.
-      if (err instanceof ApiError && err.code === "expense_not_found") onDeleted();
-      else setError(err);
       setBusy(false);
+      const code = err instanceof ApiError ? err.code : null;
+      // Already deleted by someone else: it goes from the list all the same.
+      if (code === "expense_not_found") return onDeleted();
+      setError(err);
+      // Changed by someone else since the list was loaded: show it as it is now, to delete again
+      // if that's still what they want.
+      if (code === "expense_changed")
+        api<{ expense: Expense }>(path)
+          .then((r) => onUpdated(r.expense))
+          .catch(() => {});
     }
   }
 
@@ -207,7 +218,13 @@ function ExpenseRow({
             ))}
           </ul>
         </div>
-        {error !== null && <ErrorMessage>{errorText(error)}</ErrorMessage>}
+        {error !== null && (
+          <ErrorMessage>
+            {error instanceof ApiError && error.code === "expense_changed"
+              ? t("expense.changedBeforeDelete")
+              : errorText(error)}
+          </ErrorMessage>
+        )}
         <div class="actions expense-actions">
           <a
             class="button small secondary"
@@ -337,6 +354,14 @@ function ExpenseForm({
     for (const p of [{ userId: expense.paidBy, name: expense.paidByName }, ...expense.shares])
       if (!people.some((q) => q.id === p.userId))
         people.push({ id: p.userId, name: p.name, deactivated: false, left: true });
+  // Someone who has left and owes or is owed something in it: that can't change (the server turns
+  // it down), so only the description and date can.
+  const net = (id: string) =>
+    expense
+      ? (expense.paidBy === id ? expense.amount : 0) - (expense.shares.find((s) => s.userId === id)?.amount ?? 0)
+      : 0;
+  const fixedFor = people.filter((p) => p.left && net(p.id) !== 0);
+  const locked = fixedFor.length > 0;
   const [description, setDescription] = useState(expense?.description ?? "");
   const [amountText, setAmountText] = useState(expense ? amountInput(expense.amount, group.currency) : "");
   const [paidBy, setPaidBy] = useState(expense?.paidBy ?? me.id);
@@ -392,6 +417,9 @@ function ExpenseForm({
   return (
     <Page title={t(expense ? "expenseEdit.title" : "expenseNew.title")}>
       <p class="muted">{group.name}</p>
+      {locked && (
+        <p class="muted small">{t("expenseEdit.locked", { names: fixedFor.map((p) => p.name).join(", ") })}</p>
+      )}
       <form class="form" onSubmit={submit} noValidate>
         <label class="field">
           <span>{t("expenseNew.description")}</span>
@@ -404,6 +432,7 @@ function ExpenseForm({
             onInput={(e) => setAmountText(e.currentTarget.value)}
             inputMode="decimal"
             autoComplete="off"
+            disabled={locked}
             required
           />
           {checked && amount === null && (
@@ -412,7 +441,7 @@ function ExpenseForm({
         </label>
         <label class="field">
           <span>{t("expenseNew.paidBy")}</span>
-          <select value={paidBy} onChange={(e) => setPaidBy(e.currentTarget.value)}>
+          <select value={paidBy} onChange={(e) => setPaidBy(e.currentTarget.value)} disabled={locked}>
             {people
               .filter((p) => !p.left || p.id === expense?.paidBy)
               .map((p) => (
@@ -432,6 +461,7 @@ function ExpenseForm({
             <input
               type="checkbox"
               checked={everyone}
+              disabled={locked}
               onChange={(e) =>
                 toggle(
                   group.members.map((m) => m.id),
@@ -446,6 +476,7 @@ function ExpenseForm({
               <input
                 type="checkbox"
                 checked={participants.has(p.id)}
+                disabled={locked}
                 onChange={(e) => toggle([p.id], e.currentTarget.checked)}
               />
               <span class="participant-name">

@@ -214,8 +214,12 @@ const en = {
   "expense.delete": "Delete",
   "expense.confirmDelete": "Delete “{description}”? It will still show in the group's activity.",
   "expense.edited": "edited",
+  "expense.changedBeforeDelete":
+    "Someone changed this expense meanwhile; it now shows their version. Delete it again if you still want to.",
   "expenseEdit.title": "Edit expense",
   "expenseEdit.reload": "Load the latest version",
+  "expenseEdit.locked":
+    "{names} left the group, so what they owe or are owed here can't change: only the description and date can be edited.",
   "expenseNew.left": "left the group",
   "splitMethod.equal": "split equally",
   "activity.title": "Activity",
@@ -436,8 +440,10 @@ const zh: Record<MessageKey, string> = {
   "expense.delete": "删除",
   "expense.confirmDelete": "确定删除“{description}”吗？群组动态里仍会保留这条记录。",
   "expense.edited": "已修改",
+  "expense.changedBeforeDelete": "这笔账刚被别人改过，现在显示的是最新版本。如果仍要删除，请再点一次删除。",
   "expenseEdit.title": "编辑账目",
   "expenseEdit.reload": "载入最新版本",
+  "expenseEdit.locked": "{names} 已退出群组，他们在这笔账里的应收或应付不能再变，所以只能修改说明和日期。",
   "expenseNew.left": "已退出",
   "splitMethod.equal": "平均分摊",
   "activity.title": "动态",

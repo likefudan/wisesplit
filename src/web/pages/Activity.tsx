@@ -8,8 +8,11 @@ import { ErrorMessage, Loading, useErrorText } from "../components";
 import { formatDate, formatDay } from "../format";
 import { useI18n } from "../i18n";
 
-/** What happened in the group, newest first, a page at a time. */
-export function ActivityList({ group }: { group: GroupDetail }) {
+/**
+ * What happened in the group, newest first, a page at a time. When `refresh` changes (something
+ * was done on the page), the newest entries are loaded again, keeping the older pages shown.
+ */
+export function ActivityList({ group, refresh }: { group: GroupDetail; refresh: string }) {
   const { t } = useI18n();
   const errorText = useErrorText();
   const [entries, setEntries] = useState<ActivityEntry[] | null>(null);
@@ -24,9 +27,20 @@ export function ActivityList({ group }: { group: GroupDetail }) {
     setError(null);
     try {
       const page = await api<ActivityPage>(before ? `${path}?before=${encodeURIComponent(before)}` : path);
-      setEntries((list) => (before && list ? [...list, ...page.entries] : page.entries));
       setNames((known) => ({ ...known, ...page.names }));
-      setNext(page.next);
+      if (before) {
+        setEntries((list) => [...(list ?? []), ...page.entries]);
+        setNext(page.next);
+      } else {
+        // The newest page again: what is new goes on top of what is already shown, unless there
+        // is more new than one page holds (then the list starts over from it).
+        const fresh = new Set(page.entries.map((e) => e.id));
+        const joins = (list: ActivityEntry[] | null) => !!list?.some((e) => fresh.has(e.id));
+        setEntries((list) =>
+          joins(list) ? [...page.entries, ...list!.filter((e) => !fresh.has(e.id))] : page.entries,
+        );
+        if (!joins(entries)) setNext(page.next);
+      }
     } catch (err) {
       setError(err);
     } finally {
@@ -36,7 +50,7 @@ export function ActivityList({ group }: { group: GroupDetail }) {
 
   useEffect(() => {
     load(null);
-  }, [group.id]);
+  }, [group.id, refresh]);
 
   return (
     <section>
@@ -162,8 +176,8 @@ function ActivityRow({
       <span>{text}</span>
       {changes.length > 0 && (
         <ul class="muted small activity-changes">
-          {changes.map((c) => (
-            <li key={c}>{c}</li>
+          {changes.map((c, i) => (
+            <li key={i}>{c}</li>
           ))}
         </ul>
       )}

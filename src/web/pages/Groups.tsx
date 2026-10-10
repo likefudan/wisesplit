@@ -253,7 +253,7 @@ function GroupView({ id, me }: { id: string; me: User }) {
       <AddMember path={path} onAdded={setGroup} onError={lost} />
       <InviteLink path={path} onError={lost} />
 
-      <ActivityList key={`${group.members.map((m) => m.id).join()}/${changes}`} group={group} />
+      <ActivityList group={group} refresh={`${group.members.map((m) => m.id).join()}/${changes}`} />
 
       <section>
         {isOwner ? (

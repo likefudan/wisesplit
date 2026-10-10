@@ -191,6 +191,17 @@ test("add expenses, see who owes whom, and leave once settled", async ({ browser
   friend.once("dialog", (d) => d.accept());
   await friend.getByRole("button", { name: "退出群组" }).click();
   await expect(friend.getByRole("heading", { name: "你好，Sharer Sam！" })).toBeVisible();
+
+  // What the friend owed in the gas can no longer change, but the description can.
+  await owner.reload();
+  await expense(owner, "Gas").locator("summary").click();
+  await expense(owner, "Gas").getByRole("link", { name: "Edit" }).click();
+  await expect(owner.getByText("Sharer Sam left the group, so what they owe")).toBeVisible();
+  await expect(owner.getByLabel("Amount (USD)")).toBeDisabled();
+  await expect(owner.getByRole("checkbox", { name: /Sharer Sam/ })).toBeChecked();
+  await owner.getByLabel("Description").fill("Gas and tolls");
+  await owner.getByRole("button", { name: "Save expense" }).click();
+  await expect(expense(owner, "Gas and tolls")).toContainText("Payer Pat paid $30.01 · edited");
 });
 
 test("edit and delete an expense, and see it in the activity", async ({ browser }) => {
