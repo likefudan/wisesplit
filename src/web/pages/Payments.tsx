@@ -6,7 +6,7 @@ import {
   type Payment,
   type PaymentList,
   type PaymentMethod,
-  type Transfer,
+  type Suggestion,
   venmoLink,
   venmoNote,
 } from "../../shared/settlements";
@@ -26,7 +26,7 @@ const isDeactivated = (group: GroupDetail, userId: string) =>
   group.members.some((m) => m.id === userId && m.deactivated);
 
 /** The payments that would settle the group, under the balances; yours come with a button to pay. */
-export function Suggestions({ group, me, suggestions }: { group: GroupDetail; me: User; suggestions: Transfer[] }) {
+export function Suggestions({ group, me, suggestions }: { group: GroupDetail; me: User; suggestions: Suggestion[] }) {
   const { lang, t } = useI18n();
   if (suggestions.length === 0) return null;
   return (
@@ -44,7 +44,14 @@ export function Suggestions({ group, me, suggestions }: { group: GroupDetail; me
                 : null;
           return (
             <li key={`${s.fromId}-${s.toId}`} class="suggestion-row">
-              <span>{t("settle.pays", { from: s.fromName, to: s.toName, amount })}</span>
+              <span>
+                {t("settle.pays", { from: s.fromName, to: s.toName, amount })}
+                {s.pending > 0 && (
+                  <span class="muted small suggestion-pending">
+                    {t("settle.pending", { amount: formatAmount(s.pending, group.currency, lang) })}
+                  </span>
+                )}
+              </span>
               {link && (
                 <a class="button small" href={link}>
                   {s.fromId === me.id ? t("settle.pay") : t("settle.recordReceived")}
@@ -67,7 +74,7 @@ export function Payments({
 }: {
   group: GroupDetail;
   me: User;
-  /** Changes when the balances were reloaded for another reason, so this list follows. */
+  /** Goes up after each confirm, decline or withdraw here (onChange): the list reloads. */
   version: number;
   /** A payment was confirmed, declined or withdrawn. */
   onChange: () => void;
@@ -170,7 +177,8 @@ function PaymentLine({ payment: p, group }: { payment: Payment; group: GroupDeta
         {t("payment.paid", { from: p.fromName, to: p.toName, amount: formatAmount(p.amount, group.currency, lang) })}
       </span>
       <span class="muted small">
-        {formatDate(p.createdAt, lang)} · {p.method === "venmo" ? t("payment.method.venmo") : t("payment.method.other")}
+        {formatDate(p.decidedAt ?? p.createdAt, lang)} ·{" "}
+        {p.method === "venmo" ? t("payment.method.venmo") : t("payment.method.other")}
       </span>
     </span>
   );

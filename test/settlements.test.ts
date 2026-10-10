@@ -82,6 +82,12 @@ describe("settling up", () => {
     expect(listed.pending.map((p: any) => p.id)).toEqual([payment.id]);
     expect(listed.recent).toEqual([]);
     expect((await balancesOf(id, ann)).nets).toEqual({ [ann.id]: 2000, [bob.id]: -250, [cat.id]: -1750 });
+    // The suggestion stays, saying what has been sent so far.
+    const raw = await json(await send(`/api/groups/${id}/balances`, { cookie: cat.cookie }));
+    expect(raw.suggestions.map((x: any) => [x.fromId, x.pending])).toEqual([
+      [cat.id, 1750],
+      [bob.id, 0],
+    ]);
 
     // Only the payee confirms.
     expect((await decide(id, cat, payment.id, "confirm")).status).toBe(403);

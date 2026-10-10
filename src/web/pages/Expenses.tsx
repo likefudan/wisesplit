@@ -1,7 +1,7 @@
 import { useLocation, useRoute } from "preact-iso";
 import { useEffect, useState } from "preact/hooks";
 import { type Balance, type Expense, type ExpensePage, splitEqual } from "../../shared/expenses";
-import type { Transfer } from "../../shared/settlements";
+import type { Suggestion } from "../../shared/settlements";
 import type { GroupDetail } from "../../shared/groups";
 import { amountInput, formatAmount, parseAmount } from "../../shared/money";
 import { api } from "../api";
@@ -16,14 +16,14 @@ import { Suggestions } from "./Payments";
 export function Balances({ group, me, version }: { group: GroupDetail; me: User; version: number }) {
   const { lang, t } = useI18n();
   const errorText = useErrorText();
-  const [data, setData] = useState<{ balances: Balance[]; suggestions: Transfer[] } | null>(null);
+  const [data, setData] = useState<{ balances: Balance[]; suggestions: Suggestion[] } | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [reload, setReload] = useState(0);
 
   useEffect(() => {
     let alive = true;
     setError(null);
-    api<{ balances: Balance[]; suggestions: Transfer[] }>(`/api/groups/${encodeURIComponent(group.id)}/balances`)
+    api<{ balances: Balance[]; suggestions: Suggestion[] }>(`/api/groups/${encodeURIComponent(group.id)}/balances`)
       .then((r) => alive && setData(r))
       .catch((e) => alive && setError(e));
     return () => {

@@ -1,4 +1,5 @@
 import type { Balance } from "./expenses";
+import { amountInput } from "./money";
 
 /** Payments that settle up a group, as the API shows them (src/worker/routes/settlements.ts). */
 
@@ -56,6 +57,11 @@ export interface Transfer {
   amount: number;
 }
 
+/** A suggested payment, with what its payer has already sent its payee that awaits confirmation. */
+export interface Suggestion extends Transfer {
+  pending: number;
+}
+
 const byId = (a: { userId: string }, b: { userId: string }) => (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0);
 
 /**
@@ -100,7 +106,7 @@ export function venmoLink(username: string, cents: number, note: string): string
     txn: "pay",
     audience: "private",
     recipients: username,
-    amount: `${Math.floor(cents / 100)}.${String(cents % 100).padStart(2, "0")}`,
+    amount: amountInput(cents, "USD"),
     note,
   };
   // Spaces as %20, not "+", which Venmo would show in the note as it is.

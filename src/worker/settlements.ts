@@ -55,3 +55,14 @@ export async function paymentList(env: Env, groupId: string): Promise<PaymentLis
   ]);
   return { pending: pending!.results.map(toPayment), recent: recent!.results.map(toPayment) };
 }
+
+/** What each payer has sent each payee in the group that awaits confirmation, keyed "from to". */
+export async function pendingByPair(env: Env, groupId: string): Promise<Map<string, number>> {
+  const { results } = await env.DB.prepare(
+    `SELECT from_user, to_user, SUM(amount) AS amount FROM settlements
+     WHERE group_id = ? AND status = 'pending' GROUP BY from_user, to_user`,
+  )
+    .bind(groupId)
+    .all<{ from_user: string; to_user: string; amount: number }>();
+  return new Map(results.map((r) => [`${r.from_user} ${r.to_user}`, r.amount]));
+}

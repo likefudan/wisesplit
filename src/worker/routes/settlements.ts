@@ -92,11 +92,19 @@ settlementRoutes.post("/payments", async (c) => {
         .first<{ status: string }>();
       if (payer?.status !== "deactivated") throw notYours();
     }
-    throw new HttpError(
-      429,
-      "too_many_pending",
-      `At most ${MAX_PENDING_PAYMENTS} payments by one person may await confirmation`,
-    );
+    const open = await c.env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM settlements WHERE group_id = ? AND from_user = ? AND status = 'pending'",
+    )
+      .bind(group.id, from)
+      .first<{ n: number }>();
+    if ((open?.n ?? 0) >= MAX_PENDING_PAYMENTS)
+      throw new HttpError(
+        429,
+        "too_many_pending",
+        `At most ${MAX_PENDING_PAYMENTS} payments by one person may await confirmation`,
+      );
+    // Something changed meanwhile (someone left, or was deactivated or reactivated).
+    throw new HttpError(409, "not_in_group", "Someone in this payment has changed; reload and try again");
   }
   return c.json({ payment: await paymentById(c.env, group.id, id) });
 });

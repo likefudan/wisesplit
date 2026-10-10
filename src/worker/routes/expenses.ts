@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import { EXPENSES_PAGE } from "../../shared/expenses";
-import { simplifyDebts } from "../../shared/settlements";
+import { type Suggestion, simplifyDebts } from "../../shared/settlements";
 import type { AppEnv } from "../auth";
 import { balances, expenseById, expensePage, parseNewExpense } from "../expenses";
 import { groupForMember } from "../groups";
+import { pendingByPair } from "../settlements";
 import { HttpError, now, readJson } from "../http";
 import { randomId } from "../lib/crypto";
 
@@ -17,8 +18,15 @@ expenseRoutes.get("/expenses", async (c) => {
 
 expenseRoutes.get("/balances", async (c) => {
   const group = await groupForMember(c.env, c.req.param("id")!, c.get("user").id);
-  const list = await balances(c.env, group.id);
-  return c.json({ balances: list, suggestions: simplifyDebts(list) });
+  const [list, pending] = await Promise.all([balances(c.env, group.id), pendingByPair(c.env, group.id)]);
+  let suggestions: Suggestion[] = [];
+  try {
+    suggestions = simplifyDebts(list).map((t) => ({ ...t, pending: pending.get(`${t.fromId} ${t.toId}`) ?? 0 }));
+  } catch (err) {
+    // Balances that don't add up are a bug; still show them, without suggestions.
+    console.error("balances don't add up", group.id, err);
+  }
+  return c.json({ balances: list, suggestions });
 });
 
 // Any member adds an expense, paid by any member and shared by any of them.
