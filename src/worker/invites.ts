@@ -22,26 +22,46 @@ export interface InviteRow {
   used_by: string | null;
 }
 
-/** The invite for a link's token, with its group's name and the name of the member who made it. */
-export async function findInvite(env: Env, token: string) {
-  if (!isInviteToken(token)) return null;
-  return env.DB.prepare(
-    `SELECT i.*, g.name AS group_name, u.name AS inviter_name
-     FROM group_invites i JOIN groups g ON g.id = i.group_id JOIN users u ON u.id = i.created_by
-     WHERE i.token_hash = ?`,
-  )
-    .bind(await sha256(token))
-    .first<InviteRow & { group_name: string; inviter_name: string }>();
-}
+// Whoever made the link still vouches for it: still in its group, and still allowed on the site.
+// Used inside a statement on group_invites.
+const VOUCHED = `EXISTS (SELECT 1 FROM group_members m JOIN users u ON u.id = m.user_id
+  WHERE m.group_id = group_invites.group_id AND m.user_id = group_invites.created_by AND u.status = 'approved')`;
 
 // Bound as [tokenHash, now]: the invite can still be used.
-const USABLE = "token_hash = ? AND used_at IS NULL AND expires_at > ?";
+const USABLE = `token_hash = ? AND used_at IS NULL AND expires_at > ? AND ${VOUCHED}`;
+
+export type InviteState = "valid" | "used" | "expired" | "revoked";
+
+/**
+ * The invite for a link's token, with its group's name, the name of the member who made it, and
+ * whether it can be used: not yet used, not expired, and its maker still in the group and approved
+ * ("revoked" otherwise, so a removed or deactivated member's links stop working).
+ */
+export async function findInvite(env: Env, token: string) {
+  if (!isInviteToken(token)) return null;
+  const row = await env.DB.prepare(
+    `SELECT group_invites.*, g.name AS group_name, u.name AS inviter_name, ${VOUCHED} AS vouched
+     FROM group_invites JOIN groups g ON g.id = group_invites.group_id JOIN users u ON u.id = group_invites.created_by
+     WHERE group_invites.token_hash = ?`,
+  )
+    .bind(await sha256(token))
+    .first<InviteRow & { group_name: string; inviter_name: string; vouched: number }>();
+  if (!row) return null;
+  const state: InviteState = row.used_at
+    ? "used"
+    : row.expires_at <= now()
+      ? "expired"
+      : row.vouched
+        ? "valid"
+        : "revoked";
+  return { ...row, state };
+}
 
 /**
  * An existing user follows an invite link: they join its group and the link is used up. A user
  * still waiting for approval is approved by it, as a new sign-up through the link would be (the
- * member who sent the link vouches for them). The caller has checked the user is approved or
- * pending, and not yet in the group (so the link stays usable for someone else).
+ * member who sent the link vouches for them). Throws `inviteUnusable` if the link can't be used,
+ * the user is no longer approved or pending, or is in the group already.
  */
 export async function joinByInvite(env: Env, token: string, user: UserRow): Promise<void> {
   const hash = await sha256(token);
@@ -50,14 +70,16 @@ export async function joinByInvite(env: Env, token: string, user: UserRow): Prom
   const used = "EXISTS (SELECT 1 FROM group_invites WHERE token_hash = ? AND used_by = ? AND used_at = ?)";
   const [use] = await env.DB.batch([
     // Still allowed in: the admin may have rejected or deactivated them since the caller checked.
+    // Not already in the group either (added by email meanwhile): the link stays for someone else.
     env.DB.prepare(
       `UPDATE group_invites SET used_at = ?, used_by = ? WHERE ${USABLE}
-       AND EXISTS (SELECT 1 FROM users WHERE id = ? AND status IN ('approved', 'pending'))`,
-    ).bind(at, user.id, hash, at, user.id),
+       AND EXISTS (SELECT 1 FROM users WHERE id = ? AND status IN ('approved', 'pending'))
+       AND NOT EXISTS (SELECT 1 FROM group_members WHERE group_id = group_invites.group_id AND user_id = ?)`,
+    ).bind(at, user.id, hash, at, user.id, user.id),
     env.DB.prepare(
       `INSERT INTO group_members (group_id, user_id, joined_at, added_by)
        SELECT group_id, ?, ?, created_by FROM group_invites WHERE token_hash = ? AND used_by = ? AND used_at = ?
-       ON CONFLICT DO NOTHING`,
+`,
     ).bind(user.id, at, hash, user.id, at),
     env.DB.prepare(
       `UPDATE users SET status = 'approved', decided_at = ?, decided_by = NULL

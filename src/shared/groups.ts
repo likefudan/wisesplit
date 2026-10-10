@@ -34,7 +34,8 @@ export interface GroupDetail extends GroupSummary {
 export interface InviteInfo {
   groupName: string;
   invitedBy: string;
-  state: "valid" | "used" | "expired";
+  /** "revoked": the member who made it has left the group or can no longer use the site. */
+  state: "valid" | "used" | "expired" | "revoked";
   /** Set when the signed-in user is already in the group. */
   memberOf: string | null;
 }

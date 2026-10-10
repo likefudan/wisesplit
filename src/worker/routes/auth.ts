@@ -4,7 +4,7 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { cookieName, cookieOptions, endSession, notApproved, type SessionRow, signedIn, startSession } from "../auth";
 import type { Env } from "../env";
 import { HttpError, readJson, str } from "../http";
-import { inviteNotFound, isInviteToken, registerByInvite } from "../invites";
+import { findInvite, inviteNotFound, inviteUnusable, registerByInvite } from "../invites";
 import { fromBase64Url, pkceChallenge, randomToken, timingSafeEqual, toBase64Url } from "../lib/crypto";
 import { turnstileConfigured, verifyTurnstile } from "../turnstile";
 import { alreadyRegistered, googleName, parseLang, parseName, publicUser, register } from "../users";
@@ -200,7 +200,10 @@ authRoutes.post("/register", async (c) => {
   const invite = "inviteToken" in body ? str(body.inviteToken) : null;
   if (invite !== null) {
     if (existing) throw notApproved.rejected();
-    if (!isInviteToken(invite)) throw inviteNotFound();
+    // Say so before the Turnstile answer is spent; registerByInvite checks again as it writes.
+    const found = await findInvite(c.env, invite);
+    if (!found) throw inviteNotFound();
+    if (found.state !== "valid") throw inviteUnusable();
   }
   await verifyTurnstile(c.env, str(body.turnstileToken), c.req.header("CF-Connecting-IP"));
   if (invite === null) {

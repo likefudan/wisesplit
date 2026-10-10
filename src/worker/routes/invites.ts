@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import type { InviteInfo } from "../../shared/groups";
 import { notApproved, signedIn } from "../auth";
 import type { Env } from "../env";
-import { HttpError, now } from "../http";
+import { isMember } from "../groups";
+import { HttpError } from "../http";
 import { findInvite, inviteNotFound, joinByInvite } from "../invites";
 
 /**
@@ -12,11 +13,6 @@ import { findInvite, inviteNotFound, joinByInvite } from "../invites";
  */
 export const inviteRoutes = new Hono<{ Bindings: Env }>();
 
-const isMember = async (env: Env, groupId: string, userId: string) =>
-  !!(await env.DB.prepare("SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?")
-    .bind(groupId, userId)
-    .first());
-
 inviteRoutes.get("/:token", async (c) => {
   const invite = await findInvite(c.env, c.req.param("token"));
   if (!invite) throw inviteNotFound();
@@ -24,7 +20,7 @@ inviteRoutes.get("/:token", async (c) => {
   const info: InviteInfo = {
     groupName: invite.group_name,
     invitedBy: invite.inviter_name,
-    state: invite.used_at ? "used" : invite.expires_at <= now() ? "expired" : "valid",
+    state: invite.state,
     memberOf: user && (await isMember(c.env, invite.group_id, user.id)) ? invite.group_id : null,
   };
   return c.json({ invite: info });
@@ -40,6 +36,12 @@ inviteRoutes.post("/:token/accept", async (c) => {
   if (user.status === "rejected" || user.status === "deactivated") throw notApproved[user.status]();
   const invite = await findInvite(c.env, token);
   if (!invite) throw inviteNotFound();
-  if (!(await isMember(c.env, invite.group_id, user.id))) await joinByInvite(c.env, token, user);
+  if (!(await isMember(c.env, invite.group_id, user.id)))
+    try {
+      await joinByInvite(c.env, token, user);
+    } catch (err) {
+      // Joined meanwhile (another tab, or added by email): that's what they wanted.
+      if (!(await isMember(c.env, invite.group_id, user.id))) throw err;
+    }
   return c.json({ groupId: invite.group_id });
 });

@@ -45,7 +45,7 @@ groupRoutes.post("/", async (c) => {
       me.id,
     ),
   ]);
-  return c.json({ group: await groupDetail(c.env, await groupForMember(c.env, id, me.id)) });
+  return c.json({ group: await groupDetail(c.env, { id, name, currency, owner_id: me.id, created_at: at }) });
 });
 
 groupRoutes.get("/:id", async (c) => {

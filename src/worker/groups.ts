@@ -1,4 +1,4 @@
-import { CURRENCIES, type Currency, isCurrency } from "../shared/currencies";
+import { CURRENCY_CODES, type Currency, isCurrency } from "../shared/currencies";
 import { GROUP_NAME_MAX, type GroupDetail, type GroupSummary } from "../shared/groups";
 import type { Env } from "./env";
 import { HttpError } from "./http";
@@ -22,7 +22,7 @@ export function parseGroupName(value: unknown): string {
 
 export function parseCurrency(value: unknown): Currency {
   if (!isCurrency(value))
-    throw new HttpError(400, "invalid_currency", `Currency must be one of ${Object.keys(CURRENCIES).join(", ")}`);
+    throw new HttpError(400, "invalid_currency", `Currency must be one of ${CURRENCY_CODES.join(", ")}`);
   return value;
 }
 
@@ -41,6 +41,11 @@ export async function groupForMember(env: Env, groupId: string, userId: string):
   if (!group) throw noSuchGroup();
   return group;
 }
+
+export const isMember = async (env: Env, groupId: string, userId: string) =>
+  !!(await env.DB.prepare("SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?")
+    .bind(groupId, userId)
+    .first());
 
 /**
  * Whether `userId` may leave or be removed from the group now. The rule (docs/mvp-scope.md §2): a

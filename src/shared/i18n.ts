@@ -118,6 +118,7 @@ const en = {
   "invite.open": "Open the group",
   "invite.used": "This invite link has already been used. Ask for a new one.",
   "invite.expired": "This invite link has expired. Ask for a new one.",
+  "invite.revoked": "This invite link no longer works. Ask a member of the group for a new one.",
   "invite.notFound": "This invite link doesn't exist. Check that it was copied in full.",
   "invite.blocked": "This account can't join groups.",
   "lang.en": "English",
@@ -163,7 +164,7 @@ const en = {
   "error.owner_cannot_leave": "The owner can't leave the group.",
   "error.group_not_settled": "Everyone in the group needs to be settled up first.",
   "error.invite_not_found": "This invite link doesn't exist.",
-  "error.invite_unusable": "This invite link has expired or was already used.",
+  "error.invite_unusable": "This invite link has expired, was already used, or no longer works.",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -274,6 +275,7 @@ const zh: Record<MessageKey, string> = {
   "invite.open": "打开群组",
   "invite.used": "这个邀请链接已经被用过了，请向对方要一个新的。",
   "invite.expired": "这个邀请链接已过期，请向对方要一个新的。",
+  "invite.revoked": "这个邀请链接已失效，请向群组成员要一个新的。",
   "invite.notFound": "这个邀请链接不存在，请确认链接复制完整。",
   "invite.blocked": "这个账号不能加入群组。",
   "lang.en": "English",
@@ -319,7 +321,7 @@ const zh: Record<MessageKey, string> = {
   "error.owner_cannot_leave": "群主不能退出群组。",
   "error.group_not_settled": "需要群组里每个人都结清后才可以。",
   "error.invite_not_found": "这个邀请链接不存在。",
-  "error.invite_unusable": "这个邀请链接已过期或已被使用。",
+  "error.invite_unusable": "这个邀请链接已过期、已被使用或已失效。",
 };
 
 export const MESSAGES: Record<Lang, Record<MessageKey, string>> = { en, zh };

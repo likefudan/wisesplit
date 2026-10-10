@@ -96,7 +96,7 @@ function InviteView({ token, session }: { token: string; session: Session }) {
     return (
       <Page title={t("invite.title")}>
         {intro}
-        <ErrorMessage>{invite.state === "used" ? t("invite.used") : t("invite.expired")}</ErrorMessage>
+        <ErrorMessage>{t(`invite.${invite.state}`)}</ErrorMessage>
         <a href="/">{t("notFound.home")}</a>
       </Page>
     );

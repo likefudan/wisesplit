@@ -104,6 +104,38 @@ describe("invite links", () => {
     expect((await json(res)).error.code).toBe("signup_required");
   });
 
+  it("stop working once their maker leaves the group or is deactivated", async () => {
+    const { owner, group } = await groupWithInvite();
+    const maker = await makeUser("approved", undefined, "Mo");
+    await post(`/api/groups/${group.id}/members`, owner.cookie, { email: maker.email });
+    const first = (await json(await post(`/api/groups/${group.id}/invites`, maker.cookie))).token;
+    const second = (await json(await post(`/api/groups/${group.id}/invites`, maker.cookie))).token;
+    await env.DB.prepare("UPDATE users SET status = 'deactivated' WHERE id = ?").bind(maker.id).run();
+    expect((await json(await send(`/api/invites/${first}`))).invite.state).toBe("revoked");
+    await env.DB.prepare("UPDATE users SET status = 'approved' WHERE id = ?").bind(maker.id).run();
+    expect((await json(await send(`/api/invites/${first}`))).invite.state).toBe("valid");
+    await post(`/api/groups/${group.id}/members/${maker.id}/remove`, owner.cookie);
+    // Not even the maker can get back in with it.
+    for (const token of [first, second]) {
+      expect((await json(await send(`/api/invites/${token}`))).invite.state).toBe("revoked");
+      expect((await post(`/api/invites/${token}/accept`, maker.cookie)).status).toBe(410);
+    }
+    mockTurnstile();
+    expect((await registerWith(await signIn(uniqueEmail()), first)).status).toBe(410);
+  });
+
+  it("are left for someone else when the user joined another way meanwhile", async () => {
+    const { owner, group, token } = await groupWithInvite();
+    const friend = await makeUser("approved");
+    // Added by email while the invite page was open: the join goes through without using the link.
+    const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(friend.id).first<any>();
+    await post(`/api/groups/${group.id}/members`, owner.cookie, { email: friend.email });
+    const { joinByInvite } = await import("../src/worker/invites");
+    await expect(joinByInvite(env, token, user)).rejects.toMatchObject({ code: "invite_unusable" });
+    expect((await json(await send(`/api/invites/${token}`))).invite.state).toBe("valid");
+    expect(await json(await post(`/api/invites/${token}/accept`, friend.cookie))).toEqual({ groupId: group.id });
+  });
+
   it("are gone with their group", async () => {
     const { owner, group, token } = await groupWithInvite();
     await post(`/api/groups/${group.id}/delete`, owner.cookie);
@@ -144,8 +176,12 @@ describe("signing up through an invite link", () => {
     const { token } = await groupWithInvite();
     expect((await registerWith(await signIn(uniqueEmail()), token)).status).toBe(200);
     const cookie = await signIn(uniqueEmail());
+    const turnstile = mockTurnstile();
+    turnstile.mockClear();
     const used = await registerWith(cookie, token);
     expect(used.status).toBe(410);
+    // Found out before the human check was spent.
+    expect(turnstile).not.toHaveBeenCalled();
     expect((await json(await send("/api/auth/session", { cookie }))).user).toBeNull();
     const unknown = await registerWith(cookie, "nope");
     expect((await json(unknown)).error.code).toBe("invite_not_found");
