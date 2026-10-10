@@ -49,8 +49,6 @@ export type ActivityEntry = {
   | { action: "member.removed"; data: null }
 );
 
-export type ActivityAction = ActivityEntry["action"];
-
 export interface ActivityPage {
   entries: ActivityEntry[];
   /** The name of everyone the entries mention, by user id. */

@@ -195,6 +195,7 @@ test("add expenses, see who owes whom, and leave once settled", async ({ browser
   // What the friend owed in the gas can no longer change, but the description can.
   await owner.reload();
   await expense(owner, "Gas").locator("summary").click();
+  await expect(expense(owner, "Gas").getByRole("button", { name: "Delete" })).toBeDisabled();
   await expense(owner, "Gas").getByRole("link", { name: "Edit" }).click();
   await expect(owner.getByText("Sharer Sam left the group, so what they owe")).toBeVisible();
   await expect(owner.getByLabel("Amount (USD)")).toBeDisabled();

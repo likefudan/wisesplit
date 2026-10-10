@@ -1,6 +1,14 @@
 import { useLocation, useRoute } from "preact-iso";
 import { useEffect, useState } from "preact/hooks";
-import { type Balance, type Expense, type ExpensePage, splitEqual } from "../../shared/expenses";
+import {
+  type Balance,
+  type Expense,
+  type ExpenseEdit,
+  type ExpensePage,
+  type NewExpense as NewExpenseFields,
+  netOf,
+  splitEqual,
+} from "../../shared/expenses";
 import type { GroupDetail } from "../../shared/groups";
 import { amountInput, formatAmount, parseAmount } from "../../shared/money";
 import { ApiError, api } from "../api";
@@ -82,9 +90,11 @@ export function ExpenseList({ group, me, onChange }: { group: GroupDetail; me: U
     setError(null);
     try {
       const page = await api<ExpensePage>(before ? `${path}?before=${encodeURIComponent(before)}` : path);
-      // An expense moved to an older day since the last page may come again: shown once.
+      // An expense moved to an older day since the last page may come again: shown once, as it is now.
       setExpenses((list) =>
-        before && list ? [...list, ...page.expenses.filter((e) => !list.some((x) => x.id === e.id))] : page.expenses,
+        before && list
+          ? [...list.filter((x) => !page.expenses.some((e) => e.id === x.id)), ...page.expenses]
+          : page.expenses,
       );
       setNext(page.next);
     } catch (err) {
@@ -168,6 +178,11 @@ function ExpenseRow({
   const [error, setError] = useState<unknown>(null);
   const money = (units: number) => formatAmount(units, group.currency, lang);
   const share = e.shares.find((s) => s.userId === me.id);
+  // Someone who has left owes or is owed something in it: deleting it would change that, which the
+  // server turns down.
+  const fixed = [...netOf({ ...e, shares: Object.fromEntries(e.shares.map((s) => [s.userId, s.amount])) })].some(
+    ([id, net]) => net !== 0 && !group.members.some((m) => m.id === id),
+  );
   const lent = (e.paidBy === me.id ? e.amount : 0) - (share?.amount ?? 0);
   const [status, cls] =
     e.paidBy !== me.id && !share
@@ -199,6 +214,7 @@ function ExpenseRow({
           .then((r) => onUpdated(r.expense))
           .catch((err) => {
             if (err instanceof ApiError && err.code === "expense_not_found") onDeleted();
+            else setError(err);
           });
     }
   }
@@ -238,7 +254,7 @@ function ExpenseRow({
           >
             {t("expense.edit")}
           </a>
-          <button type="button" class="button small danger" disabled={busy} onClick={remove}>
+          <button type="button" class="button small danger" disabled={busy || fixed} onClick={remove}>
             {t("expense.delete")}
           </button>
         </div>
@@ -403,12 +419,29 @@ function ExpenseForm({
     setError(null);
     if (amount === null || chosen.length === 0) return;
     setBusy(true);
-    const fields = { description, amount, paidBy, date, splitMethod: "equal", participants: chosen };
+    const fields: NewExpenseFields = { description, amount, paidBy, date, splitMethod: "equal", participants: chosen };
     const path = `/api/groups/${encodeURIComponent(group.id)}/expenses`;
     try {
-      if (expense) await api(`${path}/${encodeURIComponent(expense.id)}`, { ...fields, version: expense.version });
+      if (expense)
+        await api(`${path}/${encodeURIComponent(expense.id)}`, {
+          ...fields,
+          version: expense.version,
+        } satisfies ExpenseEdit);
       else await api(path, fields);
       route(back, true);
+    } catch (err) {
+      setError(err);
+      setBusy(false);
+    }
+  }
+
+  // Deleted by someone else meanwhile: nothing left to save.
+  const gone = error instanceof ApiError && error.code === "expense_not_found";
+
+  async function loadAgain() {
+    setBusy(true);
+    try {
+      await reload();
     } catch (err) {
       setError(err);
       setBusy(false);
@@ -499,8 +532,8 @@ function ExpenseForm({
         </fieldset>
         {error !== null && <ErrorMessage>{errorText(error)}</ErrorMessage>}
         <div class="actions">
-          {stale ? (
-            <button type="button" class="button" disabled={busy} onClick={() => reload().catch(setError)}>
+          {gone ? null : stale ? (
+            <button type="button" class="button" disabled={busy} onClick={loadAgain}>
               {t("expenseEdit.reload")}
             </button>
           ) : (
