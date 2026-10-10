@@ -1,10 +1,10 @@
-import { useEffect, useState } from "preact/hooks";
+import { useState } from "preact/hooks";
 import { LANGS, type Lang } from "../../shared/i18n";
 import { api } from "../api";
 import { Avatar, ErrorMessage, Page, useErrorText } from "../components";
-import { setLang, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { RequireUser } from "../RequireUser";
-import { type User, setUser } from "../session";
+import { chooseLang, type User, setUser } from "../session";
 import { SignOutButton } from "./Home";
 
 export function Profile() {
@@ -12,13 +12,10 @@ export function Profile() {
 }
 
 function ProfileForm({ user }: { user: User }) {
-  const { t } = useI18n();
+  const { lang, t } = useI18n();
   const errorText = useErrorText();
   const [name, setName] = useState(user.name);
   const [venmo, setVenmo] = useState(user.venmo ?? "");
-  const [lang, setFormLang] = useState<Lang>(user.lang);
-  // The header's language switch saves to the profile too; follow it so Save doesn't undo it.
-  useEffect(() => setFormLang(user.lang), [user.lang]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: true } | { ok: false; error: unknown } | null>(null);
 
@@ -27,11 +24,10 @@ function ProfileForm({ user }: { user: User }) {
     setBusy(true);
     setMessage(null);
     try {
-      const saved = (await api<{ user: User }>("/api/me", { name, venmo, lang })).user;
+      const saved = (await api<{ user: User }>("/api/me", { name, venmo })).user;
       setUser(saved);
       setName(saved.name);
       setVenmo(saved.venmo ?? "");
-      setLang(saved.lang);
       setMessage({ ok: true });
     } catch (err) {
       setMessage({ ok: false, error: err });
@@ -69,7 +65,8 @@ function ProfileForm({ user }: { user: User }) {
         </label>
         <label class="field">
           <span>{t("profile.lang")}</span>
-          <select value={lang} onChange={(e) => setFormLang(e.currentTarget.value as Lang)}>
+          {/* Applies and saves at once, like the switch in the header. */}
+          <select value={lang} onChange={(e) => chooseLang(e.currentTarget.value as Lang)}>
             {LANGS.map((l) => (
               <option key={l} value={l}>
                 {t(`lang.${l}`)}

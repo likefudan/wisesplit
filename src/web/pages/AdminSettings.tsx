@@ -1,5 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
-import type { Settings } from "../../shared/settings";
+import { MAX_CAP, type Settings } from "../../shared/settings";
 import { api } from "../api";
 import { ErrorMessage, Loading, Page, useErrorText } from "../components";
 import { useI18n } from "../i18n";
@@ -80,7 +80,7 @@ function SettingsForm() {
               type="number"
               inputMode="numeric"
               min={0}
-              max={1000}
+              max={MAX_CAP}
               value={form.dailySignupCap}
               onInput={(e) => setForm({ ...form, dailySignupCap: e.currentTarget.value })}
             />
@@ -92,7 +92,7 @@ function SettingsForm() {
               type="number"
               inputMode="numeric"
               min={0}
-              max={1000}
+              max={MAX_CAP}
               value={form.pendingCap}
               onInput={(e) => setForm({ ...form, pendingCap: e.currentTarget.value })}
             />

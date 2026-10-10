@@ -1,4 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
+import type { Lang } from "../shared/i18n";
 import type { PublicUser } from "../shared/users";
 import { ApiError, api } from "./api";
 import { currentLang, setLang } from "./i18n";
@@ -50,6 +51,25 @@ export function useSession(): SessionState {
     return () => void listeners.delete(setState);
   }, []);
   return state;
+}
+
+let langSaves: Promise<void> = Promise.resolve();
+
+/**
+ * Switches the pages' language. Signed-in users keep the choice in their profile, so it follows
+ * them to other devices; saves go one after another, so quick double clicks reach the server in
+ * the order they were made.
+ */
+export function chooseLang(next: Lang) {
+  setLang(next);
+  if (current.state !== "ok" || current.data.user?.status !== "approved") return;
+  langSaves = langSaves.then(async () => {
+    try {
+      setUser((await api<{ user: User }>("/api/me", { lang: next })).user);
+    } catch {
+      // The page has switched anyway; the profile keeps the old one until the next change.
+    }
+  });
 }
 
 /** Signs out and goes to the front page (which still shows the account if the server could not be reached). */

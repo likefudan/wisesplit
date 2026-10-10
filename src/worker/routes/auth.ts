@@ -12,7 +12,7 @@ import { alreadyRegistered, googleName, parseLang, parseName, publicUser, regist
 const STATE_PREFIX = "ws_oauth_";
 const stateCookie = (c: Context, state: string) => cookieName(c, `${STATE_PREFIX}${state.slice(0, 16)}`);
 /** Sign-ins in progress kept at once; older abandoned ones are dropped so cookies don't pile up. */
-const MAX_PENDING_SIGNINS = 3;
+const MAX_PENDING_SIGNINS = 10;
 const STATE_MINUTES = 10;
 const googleKeys = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
 

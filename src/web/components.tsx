@@ -1,31 +1,16 @@
 import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
-import { isMessageKey, type Lang } from "../shared/i18n";
-import { ApiError, api } from "./api";
-import { setLang, useI18n } from "./i18n";
-import { type User, setUser, useSession } from "./session";
+import { isMessageKey } from "../shared/i18n";
+import { ApiError } from "./api";
+import { useI18n } from "./i18n";
+import { chooseLang, useSession } from "./session";
 import { isStaging } from "./site";
-
-let langSaves: Promise<void> = Promise.resolve();
 
 /** Every page's frame: the test-site banner, the header with the account and language switch, then the content. */
 export function Page({ title, children }: { title?: string; children: ComponentChildren }) {
   const { lang, t } = useI18n();
   const session = useSession();
   const user = session.state === "ok" && session.data.user?.status === "approved" ? session.data.user : null;
-  function switchLang(next: Lang) {
-    setLang(next);
-    // Signed-in users keep the choice in their profile, so it follows them to other devices. Saves
-    // go one after another, so quick double clicks reach the server in the order they were made.
-    if (user)
-      langSaves = langSaves.then(async () => {
-        try {
-          setUser((await api<{ user: User }>("/api/me", { lang: next })).user);
-        } catch {
-          // The page has switched anyway; the profile keeps the old one until the next change.
-        }
-      });
-  }
   return (
     <>
       {isStaging && (
@@ -48,7 +33,7 @@ export function Page({ title, children }: { title?: string; children: ComponentC
             type="button"
             class="lang-switch"
             lang={lang === "zh" ? "en" : "zh-CN"}
-            onClick={() => switchLang(lang === "zh" ? "en" : "zh")}
+            onClick={() => chooseLang(lang === "zh" ? "en" : "zh")}
           >
             {t("lang.switch")}
           </button>

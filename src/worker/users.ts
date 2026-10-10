@@ -8,8 +8,17 @@ import { getSettings } from "./settings";
 
 export const NAME_MAX = 50;
 
-/** A name as stored: trimmed, inner whitespace (control characters included) collapsed to one space. */
-const tidyName = (value: unknown) => (typeof value === "string" ? value.replace(/[\s\p{Cc}]+/gu, " ").trim() : "");
+/**
+ * A name as stored: invisible format characters (bidi overrides, zero-width marks) removed, then
+ * trimmed, inner whitespace (control characters included) collapsed to one space.
+ */
+const tidyName = (value: unknown) =>
+  typeof value === "string"
+    ? value
+        .replace(/\p{Cf}+/gu, "")
+        .replace(/[\s\p{Cc}]+/gu, " ")
+        .trim()
+    : "";
 
 /** A display name: tidied, then 1 to 50 characters. */
 export function parseName(value: unknown): string {

@@ -93,9 +93,14 @@ test("the profile saves a Venmo username and the language, which follows the acc
 
   await page.goto("/profile");
   await page.getByLabel("Venmo username").fill("@pat-pays");
-  await page.getByLabel("Language").selectOption("zh");
   await page.getByRole("button", { name: "Save" }).click();
-  await expect(page.getByText("已保存。")).toBeVisible();
+  await expect(page.getByText("Saved.")).toBeVisible();
+  await expect(page.getByLabel("Venmo username")).toHaveValue("pat-pays");
+  // The language applies (and is saved) as soon as it is picked.
+  const saved = page.waitForResponse((r) => r.url().endsWith("/api/me") && r.request().method() === "POST");
+  await page.getByLabel("Language").selectOption("zh");
+  await expect(page.getByRole("heading", { name: "个人资料" })).toBeVisible();
+  expect((await saved).ok()).toBe(true);
   await expect(page.getByLabel("Venmo 用户名")).toHaveValue("pat-pays");
 
   // Another browser signed in to the same account opens in Chinese too.

@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { json, makeUser, send } from "./helpers";
 
@@ -16,9 +17,10 @@ describe("profile", () => {
       body: { name: "  Renamed ", venmo: "@Alice-Pay_1", lang: "zh" },
     });
     expect((await json(res)).user).toMatchObject({ name: "Renamed", venmo: "Alice-Pay_1", lang: "zh" });
-    // Fields left out keep their value; an empty Venmo clears it.
+    // Fields left out keep their value, even if changed meanwhile; an empty Venmo clears it.
+    await env.DB.prepare("UPDATE users SET name = 'Changed elsewhere' WHERE id = ?").bind(user.id).run();
     const partial = await json(await send("/api/me", { cookie: user.cookie, body: { venmo: "" } }));
-    expect(partial.user).toMatchObject({ name: "Renamed", venmo: null, lang: "zh" });
+    expect(partial.user).toMatchObject({ name: "Changed elsewhere", venmo: null, lang: "zh" });
   });
 
   it("checks every field before saving any", async () => {

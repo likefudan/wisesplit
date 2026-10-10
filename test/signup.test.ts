@@ -114,13 +114,14 @@ describe("signing up", () => {
       [{ name: "   " }, "invalid_name"],
       [{ name: "x".repeat(51) }, "invalid_name"],
       [{ name: "\u0007\u0000" }, "invalid_name"],
+      [{ name: "\u200B\u202E" }, "invalid_name"],
       [{ lang: "fr" }, "invalid_lang"],
     ] as const) {
       const res = await register(cookie, body);
       expect(res.status).toBe(400);
       expect((await json(res)).error.code).toBe(code);
     }
-    const ok = await register(cookie, { name: "  Two \u0007  Spaces\n " });
+    const ok = await register(cookie, { name: "  Two \u0007  Spa\u202Eces\u200B\n " });
     expect((await json(ok)).user.name).toBe("Two Spaces");
   });
 

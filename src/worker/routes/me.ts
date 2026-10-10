@@ -9,18 +9,21 @@ meRoutes.use("*", requireApproved);
 
 meRoutes.get("/", (c) => c.json({ user: publicUser(c.env, c.get("user")) }));
 
-// Saves the fields present in the body; each is checked before any is saved.
+// Saves only the fields present in the body (so a language switch can't undo a profile save made
+// at the same moment); each is checked before any is saved.
 meRoutes.post("/", async (c) => {
   const user = c.get("user");
   const body = await readJson(c.req.raw);
-  const name = "name" in body ? parseName(body.name) : user.name;
-  const venmo = "venmo" in body ? parseVenmo(body.venmo) : user.venmo;
-  const lang = "lang" in body ? parseLang(body.lang) : user.lang;
+  const fields: [string, string | null][] = [];
+  if ("name" in body) fields.push(["name", parseName(body.name)]);
+  if ("venmo" in body) fields.push(["venmo", parseVenmo(body.venmo)]);
+  if ("lang" in body) fields.push(["lang", parseLang(body.lang)]);
+  if (!fields.length) return c.json({ user: publicUser(c.env, user) });
   // Still approved: an admin may have deactivated the account since this request was checked.
   const saved = await c.env.DB.prepare(
-    "UPDATE users SET name = ?, venmo = ?, lang = ? WHERE id = ? AND status = 'approved' RETURNING *",
+    `UPDATE users SET ${fields.map(([col]) => `${col} = ?`).join(", ")} WHERE id = ? AND status = 'approved' RETURNING *`,
   )
-    .bind(name, venmo, lang, user.id)
+    .bind(...fields.map(([, v]) => v), user.id)
     .first<UserRow>();
   if (!saved) throw new HttpError(403, "account_deactivated", "This account has been deactivated");
   return c.json({ user: publicUser(c.env, saved) });

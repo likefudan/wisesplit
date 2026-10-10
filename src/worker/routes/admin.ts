@@ -22,9 +22,13 @@ adminRoutes.get("/users", async (c) => {
     .bind(status, LIST_LIMIT + 1)
     .all<UserRow>();
   return c.json({
-    users: results
-      .slice(0, LIST_LIMIT)
-      .map((u) => ({ ...publicUser(c.env, u), appliedAt: u.applied_at, decidedAt: u.decided_at })),
+    users: results.slice(0, LIST_LIMIT).map((u) => ({
+      ...publicUser(c.env, u),
+      appliedAt: u.applied_at,
+      decidedAt: u.decided_at,
+      // Named in ADMIN_EMAILS (approved or not yet): the console can't change them.
+      adminEmail: isAdminEmail(c.env, u.email),
+    })),
     // More than the page shows; plenty for a circle of friends, but say so rather than hide anyone.
     truncated: results.length > LIST_LIMIT,
   });

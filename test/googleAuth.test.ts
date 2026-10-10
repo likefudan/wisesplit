@@ -147,13 +147,13 @@ describe("Google sign-in", () => {
       `__Host-ws_oauth_${name}=${btoa(JSON.stringify({ state: name, nonce: "n", verifier: "v", next: "/", expires: Date.now() + minutes * 60_000 })).replace(/=+$/, "")}`;
     const res = await get(
       "/api/auth/google",
-      [pending("oldest", 1), pending("newer", 5), pending("newest", 9)].join("; "),
+      [pending("oldest", 1), ...Array.from({ length: 9 }, (_, i) => pending(`newer${i}`, 2 + i))].join("; "),
     );
     const dropped = res.headers
       .getSetCookie()
       .filter((h) => /^__Host-ws_oauth_\w+=;/.test(h))
       .map((h) => h.split("=")[0]);
-    // Two kept beside the new one; the oldest goes.
+    // Nine kept beside the new one; the oldest goes.
     expect(dropped).toEqual(["__Host-ws_oauth_oldest"]);
   });
 

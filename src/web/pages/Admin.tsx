@@ -7,7 +7,7 @@ import { RequireUser } from "../RequireUser";
 import { type AdminAction, actionsFor, USER_STATUSES, type UserStatus } from "../../shared/users";
 import type { User } from "../session";
 
-type Listed = User & { appliedAt: string; decidedAt: string | null };
+type Listed = User & { appliedAt: string; decidedAt: string | null; adminEmail: boolean };
 
 export function Admin() {
   return <RequireUser admin>{(me) => <UserList me={me} />}</RequireUser>;
@@ -101,7 +101,7 @@ function UserList({ me }: { me: User }) {
                 <div class="muted small">{u.email}</div>
                 <div class="muted small">{t("admin.appliedAt", { date: date(u.appliedAt) })}</div>
               </div>
-              {!u.isAdmin && (
+              {!u.adminEmail && (
                 <div class="user-actions">
                   {actionsFor(u.status).map((a) => (
                     <button
