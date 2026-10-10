@@ -80,7 +80,8 @@ export function SignedOut({ session, next }: { session: Session; next?: string }
       <p>{t("home.signedOut")}</p>
       {query.error && <ErrorMessage>{isMessageKey(loginError) ? t(loginError) : t("login.error.failed")}</ErrorMessage>}
       {session.googleEnabled ? (
-        <a class="button" href={href}>
+        // target="_top": a real page load to the Worker, not a route inside this app.
+        <a class="button" href={href} target="_top">
           {t("login.google")}
         </a>
       ) : (

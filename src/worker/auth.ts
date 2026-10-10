@@ -130,12 +130,15 @@ export const userByGoogle = (env: Env, sub: string) =>
 
 /** Whether a Google email is one of the admins listed in the ADMIN_EMAILS secret (case doesn't matter). */
 export function isAdminEmail(env: Env, email: string): boolean {
-  const admins = (env.ADMIN_EMAILS ?? "")
+  return adminEmails(env).includes(email.trim().toLowerCase());
+}
+
+/** The ADMIN_EMAILS list, lowercased. */
+export const adminEmails = (env: Env) =>
+  (env.ADMIN_EMAILS ?? "")
     .split(",")
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
-  return admins.includes(email.trim().toLowerCase());
-}
 
 /**
  * An admin is an approved user with an admin email. Admins can't be rejected or deactivated (the

@@ -30,9 +30,14 @@ function publish(next: SessionState) {
 export async function refreshSession(): Promise<void> {
   try {
     const data = await api<Session>("/api/auth/session");
-    // The language saved in the profile wins over this browser's choice.
-    if (data.user?.status === "approved" && data.user.lang !== currentLang()) setLang(data.user.lang);
+    const choice = choiceWhileLoading;
+    choiceWhileLoading = null;
     publish({ state: "ok", data });
+    if (data.user?.status !== "approved") return;
+    // A language picked while this loaded is the newest choice: save it. Otherwise the language
+    // saved in the profile wins over this browser's.
+    if (choice && choice !== data.user.lang) chooseLang(choice);
+    else if (data.user.lang !== currentLang()) setLang(data.user.lang);
   } catch (e) {
     publish({ state: "error", error: e instanceof ApiError ? e : new ApiError("network", 0, String(e)) });
   }
@@ -54,6 +59,7 @@ export function useSession(): SessionState {
 }
 
 let langSaves: Promise<void> = Promise.resolve();
+let choiceWhileLoading: Lang | null = null;
 
 /**
  * Switches the pages' language. Signed-in users keep the choice in their profile, so it follows
@@ -62,6 +68,7 @@ let langSaves: Promise<void> = Promise.resolve();
  */
 export function chooseLang(next: Lang) {
   setLang(next);
+  if (current.state === "loading") choiceWhileLoading = next;
   if (current.state !== "ok" || current.data.user?.status !== "approved") return;
   langSaves = langSaves.then(async () => {
     try {

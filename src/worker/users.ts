@@ -9,13 +9,14 @@ import { getSettings } from "./settings";
 export const NAME_MAX = 50;
 
 /**
- * A name as stored: invisible format characters (bidi overrides, zero-width marks) removed, then
- * trimmed, inner whitespace (control characters included) collapsed to one space.
+ * A name as stored: invisible characters that can disguise a name (bidi overrides and marks,
+ * zero-width space, soft hyphen) removed, keeping the zero-width joiners some scripts and emoji
+ * need; then trimmed, with inner whitespace (control characters included) collapsed to one space.
  */
 const tidyName = (value: unknown) =>
   typeof value === "string"
     ? value
-        .replace(/\p{Cf}+/gu, "")
+        .replace(/[\u00ad\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]+/g, "")
         .replace(/[\s\p{Cc}]+/gu, " ")
         .trim()
     : "";

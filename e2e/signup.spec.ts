@@ -136,3 +136,16 @@ test("signing out from the profile", async ({ page, browser }) => {
   await page.goto("/admin");
   await expect(page.getByRole("heading", { name: "Hello!" })).toBeVisible();
 });
+
+test("the Google button leaves the app for the Worker's sign-in, remembering the page", async ({ page }) => {
+  await page.route("**/api/auth/session", (route) =>
+    route.fulfill({ json: { googleEnabled: true, turnstileSiteKey: null, identity: null, user: null } }),
+  );
+  await page.route("**/api/auth/google?*", (route) =>
+    route.fulfill({ contentType: "text/html", body: "<h1>Off to Google</h1>" }),
+  );
+  await page.goto("/profile");
+  await page.getByRole("link", { name: "Sign in with Google" }).click();
+  await expect(page.getByRole("heading", { name: "Off to Google" })).toBeVisible();
+  await expect(page).toHaveURL("/api/auth/google?next=%2Fprofile");
+});

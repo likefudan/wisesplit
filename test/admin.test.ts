@@ -86,6 +86,9 @@ describe("admin console", () => {
       env: { ADMIN_EMAILS: `${boss.email},${other.email}` },
     });
     expect((await json(res)).error.code).toBe("cannot_change_admin");
+    expect((await env.DB.prepare("SELECT status FROM users WHERE id = ?").bind(other.id).first())!.status).toBe(
+      "pending",
+    );
   });
 
   it("has approval on by default, and saves the settings", async () => {

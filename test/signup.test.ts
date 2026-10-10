@@ -123,6 +123,9 @@ describe("signing up", () => {
     }
     const ok = await register(cookie, { name: "  Two \u0007  Spa\u202Eces\u200B\n " });
     expect((await json(ok)).user.name).toBe("Two Spaces");
+    // Joiners that scripts and emoji need are kept.
+    const joined = await register(await signIn(uniqueEmail()), { name: "👨\u200D👩\u200D👧 می\u200Cخواهم" });
+    expect((await json(joined)).user.name).toBe("👨\u200D👩\u200D👧 می\u200Cخواهم");
   });
 
   it("needs a Google sign-in first", async () => {
