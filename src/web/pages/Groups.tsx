@@ -1,7 +1,7 @@
 import { useLocation, useRoute } from "preact-iso";
 import { useEffect, useState } from "preact/hooks";
 import { CURRENCY_CODES, type Currency } from "../../shared/currencies";
-import type { GroupDetail, GroupMember, GroupSummary } from "../../shared/groups";
+import { type GroupDetail, type GroupMember, type GroupSummary, INVITE_DAYS } from "../../shared/groups";
 import { api } from "../api";
 import { Avatar, ErrorMessage, Loading, Page, useErrorText } from "../components";
 import { currencyLabel, formatDate } from "../format";
@@ -380,7 +380,7 @@ function InviteLink({ path }: { path: string }) {
         </div>
       ) : (
         <>
-          <p class="muted">{t("group.invite.about")}</p>
+          <p class="muted">{t("group.invite.about", { days: INVITE_DAYS })}</p>
           <button type="button" class="button secondary" disabled={busy} onClick={create}>
             {t("group.invite.create")}
           </button>

@@ -5,6 +5,12 @@ export const INVITE_DAYS = 7;
 
 export const GROUP_NAME_MAX = 60;
 
+/**
+ * Unused, unexpired invite links one member may have at a time, across all their groups. Each
+ * lets someone skip the approval queue. (error.too_many_invites in i18n.ts names the number.)
+ */
+export const MAX_OPEN_INVITES = 10;
+
 /** A group in the my-groups list (src/worker/routes/groups.ts). */
 export interface GroupSummary {
   id: string;

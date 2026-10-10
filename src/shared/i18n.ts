@@ -103,7 +103,8 @@ const en = {
   "group.invite.label": "Invite link",
   "group.invite.copy": "Copy",
   "group.invite.copied": "Copied.",
-  "group.invite.about": "Each link works once, for 7 days. Someone who signs up through it can use the site at once.",
+  "group.invite.about":
+    "Each link works once, for {days} days. Someone who signs up through it can use the site at once.",
   "group.leave": "Leave group",
   "group.confirm.leave": "Leave {name}?",
   "group.delete": "Delete group",
@@ -119,7 +120,8 @@ const en = {
   "invite.used": "This invite link has already been used. Ask for a new one.",
   "invite.expired": "This invite link has expired. Ask for a new one.",
   "invite.revoked": "This invite link no longer works. Ask a member of the group for a new one.",
-  "invite.notFound": "This invite link doesn't exist. Check that it was copied in full.",
+  "invite.notFound":
+    "This invite link doesn't exist, or expired a while ago. Check that it was copied in full, or ask for a new one.",
   "invite.blocked": "This account can't join groups.",
   "invite.pending":
     "Your sign-up is still waiting for the admin's approval. Open this link again once you're approved.",
@@ -166,8 +168,7 @@ const en = {
   "error.owner_cannot_leave": "The owner can't leave the group.",
   "error.group_not_settled": "Everyone in the group needs to be settled up first.",
   "error.invite_not_found": "This invite link doesn't exist.",
-  "error.too_many_invites":
-    "You already have 10 unused invite links for this group. Use those first, or wait for them to expire.",
+  "error.too_many_invites": "You already have 10 unused invite links. Use those first, or wait for them to expire.",
   "error.invite_unusable": "This invite link has expired, was already used, or no longer works.",
 } as const;
 
@@ -265,7 +266,7 @@ const zh: Record<MessageKey, string> = {
   "group.invite.label": "邀请链接",
   "group.invite.copy": "复制",
   "group.invite.copied": "已复制。",
-  "group.invite.about": "每个链接只能用一次，7 天内有效。通过链接注册的人可以直接使用本站。",
+  "group.invite.about": "每个链接只能用一次，{days} 天内有效。通过链接注册的人可以直接使用本站。",
   "group.leave": "退出群组",
   "group.confirm.leave": "确定退出 {name} 吗？",
   "group.delete": "删除群组",
@@ -280,7 +281,7 @@ const zh: Record<MessageKey, string> = {
   "invite.used": "这个邀请链接已经被用过了，请向对方要一个新的。",
   "invite.expired": "这个邀请链接已过期，请向对方要一个新的。",
   "invite.revoked": "这个邀请链接已失效，请向群组成员要一个新的。",
-  "invite.notFound": "这个邀请链接不存在，请确认链接复制完整。",
+  "invite.notFound": "这个邀请链接不存在或早已过期。请确认链接复制完整，或向对方要一个新的。",
   "invite.blocked": "这个账号不能加入群组。",
   "invite.pending": "你的注册申请还在等待管理员审核。审核通过后再打开这个链接即可加入。",
   "lang.en": "English",
@@ -326,7 +327,7 @@ const zh: Record<MessageKey, string> = {
   "error.owner_cannot_leave": "群主不能退出群组。",
   "error.group_not_settled": "需要群组里每个人都结清后才可以。",
   "error.invite_not_found": "这个邀请链接不存在。",
-  "error.too_many_invites": "你在这个群组已有 10 个未使用的邀请链接，请先用掉它们或等它们过期。",
+  "error.too_many_invites": "你已有 10 个未使用的邀请链接，请先用掉它们或等它们过期。",
   "error.invite_unusable": "这个邀请链接已过期、已被使用或已失效。",
 };
 

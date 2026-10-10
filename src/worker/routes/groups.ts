@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { INVITE_DAYS } from "../../shared/groups";
+import { INVITE_DAYS, MAX_OPEN_INVITES } from "../../shared/groups";
 import { type AppEnv, requireApproved } from "../auth";
 import { groupDetail, groupForMember, groupsOf, mayDelete, mayLeave, parseCurrency, parseGroupName } from "../groups";
 import type { Env } from "../env";
@@ -129,10 +129,7 @@ groupRoutes.post("/:id/delete", async (c) => {
   return c.body(null, 204);
 });
 
-// A new invite link. The token is returned once; only its hash is kept. Each link lets someone
-// skip the approval queue, so a member may only have a few unused ones in a group at a time.
-const MAX_OPEN_INVITES = 10;
-
+// A new invite link. The token is returned once; only its hash is kept.
 groupRoutes.post("/:id/invites", async (c) => {
   const me = c.get("user");
   const group = await groupForMember(c.env, c.req.param("id"), me.id);
@@ -147,10 +144,10 @@ groupRoutes.post("/:id/invites", async (c) => {
     c.env.DB.prepare(
       `INSERT INTO group_invites (token_hash, group_id, created_by, created_at, expires_at)
        SELECT ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM group_invites
-         WHERE group_id = ? AND created_by = ? AND used_at IS NULL) < ?
+         WHERE created_by = ? AND used_at IS NULL AND expires_at > ?) < ?
          AND EXISTS (SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?)
        RETURNING token_hash`,
-    ).bind(await sha256(token), group.id, me.id, at, expiresAt, group.id, me.id, MAX_OPEN_INVITES, group.id, me.id),
+    ).bind(await sha256(token), group.id, me.id, at, expiresAt, me.id, at, MAX_OPEN_INVITES, group.id, me.id),
   ]);
   if (!insert?.results.length) {
     await groupForMember(c.env, group.id, me.id);

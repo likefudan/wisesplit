@@ -145,10 +145,11 @@ describe("invite links", () => {
     expect(await json(await post(`/api/invites/${token}/accept`, friend.cookie))).toEqual({ groupId: group.id });
   });
 
-  it("are limited to 10 unused ones per member and group", async () => {
+  it("are limited to 10 unused ones per member, across their groups", async () => {
     const { owner, group } = await groupWithInvite();
     for (let i = 1; i < 10; i++) expect((await post(`/api/groups/${group.id}/invites`, owner.cookie)).status).toBe(200);
-    const res = await post(`/api/groups/${group.id}/invites`, owner.cookie);
+    const other = (await json(await post("/api/groups", owner.cookie, { name: "Other", currency: "USD" }))).group;
+    const res = await post(`/api/groups/${other.id}/invites`, owner.cookie);
     expect(res.status).toBe(429);
     expect((await json(res)).error.code).toBe("too_many_invites");
     // Expired ones no longer count.

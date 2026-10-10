@@ -118,11 +118,14 @@ export function SignupForm({
   again,
   inviteToken,
   onJoined,
+  onInviteGone,
 }: {
   session: Session;
   again?: boolean;
   inviteToken?: string;
   onJoined?: (groupId: string) => void;
+  /** The invite link turned out to be used up or gone; the form is no use any more. */
+  onInviteGone?: () => void;
 }) {
   const { lang, t } = useI18n();
   const errorText = useErrorText();
@@ -156,6 +159,7 @@ export function SignupForm({
       setResetKey((k) => k + 1);
       // Signed up meanwhile (another tab, or the admin approved a rejected applicant): show where it stands.
       if (err instanceof ApiError && err.code === "already_registered") refreshSession();
+      if (err instanceof ApiError && err.code.startsWith("invite_")) onInviteGone?.();
     } finally {
       setBusy(false);
     }

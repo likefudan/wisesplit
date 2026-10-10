@@ -35,3 +35,4 @@ CREATE TABLE group_invites (
   used_by TEXT REFERENCES users (id)
 );
 CREATE INDEX group_invites_group ON group_invites (group_id, expires_at);
+CREATE INDEX group_invites_creator ON group_invites (created_by, used_at);

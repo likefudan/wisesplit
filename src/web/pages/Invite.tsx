@@ -33,6 +33,8 @@ function InviteView({ token, session }: { token: string; session: Session }) {
   const [loadError, setLoadError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  // Loads the invite again, e.g. after it turned out to be used up meanwhile.
+  const [reload, setReload] = useState(0);
   const path = `/api/invites/${encodeURIComponent(token)}`;
   const userId = session.user?.id;
 
@@ -46,7 +48,7 @@ function InviteView({ token, session }: { token: string; session: Session }) {
       alive = false;
     };
     // Again once signed up: they may turn out to be in the group already.
-  }, [path, userId]);
+  }, [path, userId, reload]);
 
   const openGroup = (groupId: string) => route(`/groups/${encodeURIComponent(groupId)}`);
 
@@ -59,6 +61,8 @@ function InviteView({ token, session }: { token: string; session: Session }) {
     } catch (err) {
       setError(err);
       setBusy(false);
+      // Used, withdrawn or gone meanwhile: the page says which.
+      if (err instanceof ApiError && err.code.startsWith("invite_")) setReload((n) => n + 1);
     }
   }
 
@@ -109,7 +113,12 @@ function InviteView({ token, session }: { token: string; session: Session }) {
           <GoogleSignIn session={session} next={`/invite/${token}`} />
         </>
       ) : !user ? (
-        <SignupForm session={session} inviteToken={token} onJoined={openGroup} />
+        <SignupForm
+          session={session}
+          inviteToken={token}
+          onJoined={openGroup}
+          onInviteGone={() => setReload((n) => n + 1)}
+        />
       ) : user.status === "approved" ? (
         <>
           {error !== null && <ErrorMessage>{errorText(error)}</ErrorMessage>}
