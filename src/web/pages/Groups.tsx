@@ -2,7 +2,7 @@ import { useLocation, useRoute } from "preact-iso";
 import { useEffect, useState } from "preact/hooks";
 import { CURRENCY_CODES, type Currency } from "../../shared/currencies";
 import { type GroupDetail, type GroupMember, type GroupSummary, INVITE_DAYS } from "../../shared/groups";
-import { api } from "../api";
+import { ApiError, api } from "../api";
 import { Avatar, ErrorMessage, Loading, Page, useErrorText } from "../components";
 import { currencyLabel, formatDate } from "../format";
 import { useI18n } from "../i18n";
@@ -174,11 +174,16 @@ function GroupView({ id, me }: { id: string; me: User }) {
       // The list may be out of date (someone left meanwhile): show it as it is now.
       api<{ group: GroupDetail }>(path)
         .then((r) => setGroup(r.group))
-        .catch(() => {});
+        .catch(lost);
     } finally {
       setBusy(false);
     }
   }
+
+  // Removed from the group (or it was deleted) while the page was open: say so instead of the page.
+  const lost = (err: unknown) => {
+    if (err instanceof ApiError && err.code === "group_not_found") setLoadError(err);
+  };
 
   const remove = (m: GroupMember) =>
     act(t("group.confirm.remove", { name: m.name }), async () => {
@@ -242,8 +247,8 @@ function GroupView({ id, me }: { id: string; me: User }) {
         </ul>
       </section>
 
-      <AddMember path={path} onAdded={setGroup} />
-      <InviteLink path={path} />
+      <AddMember path={path} onAdded={setGroup} onError={lost} />
+      <InviteLink path={path} onError={lost} />
 
       <section>
         {isOwner ? (
@@ -263,7 +268,15 @@ function GroupView({ id, me }: { id: string; me: User }) {
   );
 }
 
-function AddMember({ path, onAdded }: { path: string; onAdded: (group: GroupDetail) => void }) {
+function AddMember({
+  path,
+  onAdded,
+  onError,
+}: {
+  path: string;
+  onAdded: (group: GroupDetail) => void;
+  onError: (err: unknown) => void;
+}) {
   const { t } = useI18n();
   const errorText = useErrorText();
   const [email, setEmail] = useState("");
@@ -281,6 +294,7 @@ function AddMember({ path, onAdded }: { path: string; onAdded: (group: GroupDeta
       setEmail("");
     } catch (err) {
       setMessage({ ok: false, error: err });
+      onError(err);
     } finally {
       setBusy(false);
     }
@@ -321,7 +335,7 @@ function AddMember({ path, onAdded }: { path: string; onAdded: (group: GroupDeta
   );
 }
 
-function InviteLink({ path }: { path: string }) {
+function InviteLink({ path, onError }: { path: string; onError: (err: unknown) => void }) {
   const { lang, t } = useI18n();
   const errorText = useErrorText();
   const [link, setLink] = useState<{ url: string; expiresAt: string } | null>(null);
@@ -338,6 +352,7 @@ function InviteLink({ path }: { path: string }) {
       setLink({ url: `${location.origin}/invite/${r.token}`, expiresAt: r.expiresAt });
     } catch (err) {
       setError(err);
+      onError(err);
     } finally {
       setBusy(false);
     }

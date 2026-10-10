@@ -122,7 +122,9 @@ const en = {
   "invite.revoked": "This invite link no longer works. Ask a member of the group for a new one.",
   "invite.notFound":
     "This invite link doesn't exist, or expired a while ago. Check that it was copied in full, or ask for a new one.",
-  "invite.blocked": "This account can't join groups.",
+  "invite.blocked": "This account has been deactivated and can't join groups.",
+  "invite.rejected":
+    "Your sign-up was not approved, so invite links can't let you in. You can apply again from the home page.",
   "invite.pending":
     "Your sign-up is still waiting for the admin's approval. Open this link again once you're approved.",
   "lang.en": "English",
@@ -282,7 +284,8 @@ const zh: Record<MessageKey, string> = {
   "invite.expired": "这个邀请链接已过期，请向对方要一个新的。",
   "invite.revoked": "这个邀请链接已失效，请向群组成员要一个新的。",
   "invite.notFound": "这个邀请链接不存在或早已过期。请确认链接复制完整，或向对方要一个新的。",
-  "invite.blocked": "这个账号不能加入群组。",
+  "invite.blocked": "这个账号已被停用，不能加入群组。",
+  "invite.rejected": "你的注册申请没有通过，所以不能通过邀请链接加入。你可以在首页重新申请。",
   "invite.pending": "你的注册申请还在等待管理员审核。审核通过后再打开这个链接即可加入。",
   "lang.en": "English",
   "lang.zh": "中文",

@@ -48,7 +48,7 @@ curl -i -X POST http://localhost:8787/api/test/login -H 'Origin: http://localhos
 ### Groups
 
 - Any approved user can create a group (`src/worker/routes/groups.ts`) and is its owner for good: the owner can remove members and delete the group but can't leave it. Each group has one currency from the fixed list in `src/shared/currencies.ts`, set at creation.
-- Members add approved users by their Google email, or make an invite link (`/invite/<token>`, single use, 7 days; only the token's SHA-256 is stored). Someone new who signs up through a link skips the approval queue and the caps (Turnstile still applies) and lands in the group; someone already approved joins with one click. Links don't let in anyone already waiting for approval, rejected or deactivated, and stop working when their maker leaves the group or is deactivated (`src/worker/invites.ts`). A member may have 10 unused links per group.
+- Members add approved users by their Google email, or make an invite link (`/invite/<token>`, single use, 7 days; only the token's SHA-256 is stored). Someone new who signs up through a link skips the approval queue and the caps (Turnstile still applies) and lands in the group; someone already approved joins with one click. Links don't let in anyone already waiting for approval, rejected or deactivated, and stop working when their maker leaves the group or is deactivated (`src/worker/invites.ts`). A member may have 10 unused links at a time, across their groups.
 - Leaving, removal and deletion will require the group to be settled; `mayLeave`/`mayDelete` in `src/worker/groups.ts` are stubs until expenses exist.
 
 ### Languages

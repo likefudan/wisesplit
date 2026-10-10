@@ -130,6 +130,11 @@ function InviteView({ token, session }: { token: string; session: Session }) {
         </>
       ) : user.status === "pending" ? (
         <p>{t("invite.pending")}</p>
+      ) : user.status === "rejected" ? (
+        <>
+          <p>{t("invite.rejected")}</p>
+          <a href="/">{t("notFound.home")}</a>
+        </>
       ) : (
         <>
           <ErrorMessage>{t("invite.blocked")}</ErrorMessage>
