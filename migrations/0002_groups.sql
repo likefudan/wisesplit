@@ -1,3 +1,6 @@
+-- Members add each other by Google email, whatever its case.
+CREATE INDEX users_email ON users (lower(email));
+
 -- Groups of people who share costs. The currency is fixed at creation (src/shared/currencies.ts);
 -- the owner is whoever created the group and never changes (owners can't leave, only delete it).
 CREATE TABLE groups (

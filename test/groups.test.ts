@@ -70,7 +70,11 @@ describe("adding members by email", () => {
       email: ` ${friend.email.toUpperCase()} `,
     });
     expect(res.status).toBe(200);
-    expect((await json(res)).group.members.map((m: any) => m.name)).toEqual(["Test User", "Fred"]);
+    const body = await json(res);
+    expect(body.added).toBe(friend.id);
+    expect(body.group.members.map((m: any) => m.name)).toEqual(["Test User", "Fred"]);
+    // Members see each other's names, not their emails.
+    expect(body.group.members[1]).not.toHaveProperty("email");
     // The friend sees the group, and can add people too.
     expect((await json(await send("/api/groups", { cookie: friend.cookie }))).groups[0]).toMatchObject({
       id: group.id,

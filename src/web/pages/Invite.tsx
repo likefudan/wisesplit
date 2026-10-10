@@ -4,13 +4,13 @@ import type { InviteInfo } from "../../shared/groups";
 import { ApiError, api } from "../api";
 import { ErrorMessage, Loading, Page, useErrorText } from "../components";
 import { useI18n } from "../i18n";
-import { refreshSession, type Session, useSession } from "../session";
+import { type Session, useSession } from "../session";
 import { GoogleSignIn, SessionError, SignupForm } from "./Home";
 
 /**
  * An invite link (/invite/<token>). Says which group it is for, then follows the visitor: signed
  * out (sign in with Google, coming back here), signed in but new (sign up through the link,
- * approved at once), or signed up (join with one click).
+ * approved at once), or approved (join with one click).
  */
 export function Invite() {
   const { params } = useRoute();
@@ -55,8 +55,6 @@ function InviteView({ token, session }: { token: string; session: Session }) {
     setError(null);
     try {
       const { groupId } = await api<{ groupId: string }>(`${path}/accept`, {});
-      // Someone waiting for approval was approved by joining.
-      if (session.user?.status !== "approved") await refreshSession();
       openGroup(groupId);
     } catch (err) {
       setError(err);
@@ -112,7 +110,7 @@ function InviteView({ token, session }: { token: string; session: Session }) {
         </>
       ) : !user ? (
         <SignupForm session={session} inviteToken={token} onJoined={openGroup} />
-      ) : user.status === "approved" || user.status === "pending" ? (
+      ) : user.status === "approved" ? (
         <>
           {error !== null && <ErrorMessage>{errorText(error)}</ErrorMessage>}
           <div class="actions">
@@ -121,6 +119,8 @@ function InviteView({ token, session }: { token: string; session: Session }) {
             </button>
           </div>
         </>
+      ) : user.status === "pending" ? (
+        <p>{t("invite.pending")}</p>
       ) : (
         <>
           <ErrorMessage>{t("invite.blocked")}</ErrorMessage>

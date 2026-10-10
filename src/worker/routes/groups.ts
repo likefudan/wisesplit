@@ -78,7 +78,7 @@ groupRoutes.post("/:id/members", async (c) => {
     await groupForMember(c.env, group.id, me.id);
     throw userNotFound();
   }
-  return c.json({ group: await groupDetail(c.env, group) });
+  return c.json({ group: await groupDetail(c.env, group), added: user.id });
 });
 
 /**
@@ -142,15 +142,19 @@ groupRoutes.post("/:id/invites", async (c) => {
   const [, insert] = await c.env.DB.batch([
     // Expired links are of no further interest (used ones are kept until then, to say so).
     c.env.DB.prepare("DELETE FROM group_invites WHERE group_id = ? AND expires_at <= ?").bind(group.id, at),
-    // Counted in the statement that adds the link, so parallel requests can't get past the limit.
+    // Counted in the statement that adds the link, so parallel requests can't get past the limit;
+    // and its maker still in the group, so a link can't slip past removeMember's clean-up.
     c.env.DB.prepare(
       `INSERT INTO group_invites (token_hash, group_id, created_by, created_at, expires_at)
        SELECT ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM group_invites
          WHERE group_id = ? AND created_by = ? AND used_at IS NULL) < ?
+         AND EXISTS (SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?)
        RETURNING token_hash`,
-    ).bind(await sha256(token), group.id, me.id, at, expiresAt, group.id, me.id, MAX_OPEN_INVITES),
+    ).bind(await sha256(token), group.id, me.id, at, expiresAt, group.id, me.id, MAX_OPEN_INVITES, group.id, me.id),
   ]);
-  if (!insert?.results.length)
+  if (!insert?.results.length) {
+    await groupForMember(c.env, group.id, me.id);
     throw new HttpError(429, "too_many_invites", `At most ${MAX_OPEN_INVITES} unused invite links per member`);
+  }
   return c.json({ token, expiresAt });
 });

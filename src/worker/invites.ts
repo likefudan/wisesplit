@@ -58,33 +58,27 @@ export async function findInvite(env: Env, token: string) {
 }
 
 /**
- * An existing user follows an invite link: they join its group and the link is used up. A user
- * still waiting for approval is approved by it, as a new sign-up through the link would be (the
- * member who sent the link vouches for them). Throws `inviteUnusable` if the link can't be used,
- * the user is no longer approved or pending, or is in the group already.
+ * An approved user follows an invite link: they join its group and the link is used up. Throws
+ * `inviteUnusable` if the link can't be used, the user is no longer approved, or is in the group
+ * already. (Someone still waiting for approval is not let in by a link: they may be waiting
+ * because the admin rejected them once. Only new sign-ups skip the queue, registerByInvite.)
  */
 export async function joinByInvite(env: Env, token: string, user: UserRow): Promise<void> {
   const hash = await sha256(token);
   const at = now();
-  // Statements 2 and 3 only act if statement 1 used the link, which leaves this exact mark on it.
-  const used = "EXISTS (SELECT 1 FROM group_invites WHERE token_hash = ? AND used_by = ? AND used_at = ?)";
   const [use] = await env.DB.batch([
-    // Still allowed in: the admin may have rejected or deactivated them since the caller checked.
-    // Not already in the group either (added by email meanwhile): the link stays for someone else.
+    // Still approved: the admin may have deactivated them since the caller checked. Not already in
+    // the group either (added by email meanwhile): then the link stays for someone else.
     env.DB.prepare(
       `UPDATE group_invites SET used_at = ?, used_by = ? WHERE ${USABLE}
-       AND EXISTS (SELECT 1 FROM users WHERE id = ? AND status IN ('approved', 'pending'))
+       AND EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'approved')
        AND NOT EXISTS (SELECT 1 FROM group_members WHERE group_id = group_invites.group_id AND user_id = ?)`,
     ).bind(at, user.id, hash, at, user.id, user.id),
+    // Only if the statement above used the link, which leaves this exact mark on it.
     env.DB.prepare(
       `INSERT INTO group_members (group_id, user_id, joined_at, added_by)
-       SELECT group_id, ?, ?, created_by FROM group_invites WHERE token_hash = ? AND used_by = ? AND used_at = ?
-`,
+       SELECT group_id, ?, ?, created_by FROM group_invites WHERE token_hash = ? AND used_by = ? AND used_at = ?`,
     ).bind(user.id, at, hash, user.id, at),
-    env.DB.prepare(
-      `UPDATE users SET status = 'approved', decided_at = ?, decided_by = NULL
-       WHERE id = ? AND status = 'pending' AND ${used}`,
-    ).bind(at, user.id, hash, user.id, at),
   ]);
   if (!use?.meta.changes) throw inviteUnusable();
 }

@@ -84,17 +84,23 @@ describe("invite links", () => {
     expect(res.status).toBe(410);
   });
 
-  it("approve a user who is still waiting, but not a rejected or deactivated one", async () => {
+  it("let in approved users only", async () => {
     const { owner, group, token } = await groupWithInvite();
-    for (const status of ["rejected", "deactivated"] as const) {
+    // Someone waiting may have been rejected before: a link doesn't get them past the admin.
+    for (const [status, code] of [
+      ["pending", "pending_approval"],
+      ["rejected", "account_rejected"],
+      ["deactivated", "account_deactivated"],
+    ] as const) {
       const user = await makeUser(status);
       const res = await post(`/api/invites/${token}/accept`, user.cookie);
       expect(res.status).toBe(403);
+      expect((await json(res)).error.code).toBe(code);
+      if (status === "pending")
+        expect((await json(await send("/api/auth/session", { cookie: user.cookie }))).user.status).toBe("pending");
     }
-    const pending = await makeUser("pending");
-    expect((await post(`/api/invites/${token}/accept`, pending.cookie)).status).toBe(200);
-    expect((await json(await send("/api/me", { cookie: pending.cookie }))).user.status).toBe("approved");
-    expect(await members(group.id, owner.cookie)).toEqual([owner.id, pending.id]);
+    expect(await members(group.id, owner.cookie)).toEqual([owner.id]);
+    expect((await json(await send(`/api/invites/${token}`))).invite.state).toBe("valid");
   });
 
   it("need a signed-up account to accept", async () => {

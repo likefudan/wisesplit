@@ -121,6 +121,8 @@ const en = {
   "invite.revoked": "This invite link no longer works. Ask a member of the group for a new one.",
   "invite.notFound": "This invite link doesn't exist. Check that it was copied in full.",
   "invite.blocked": "This account can't join groups.",
+  "invite.pending":
+    "Your sign-up is still waiting for the admin's approval. Open this link again once you're approved.",
   "lang.en": "English",
   "lang.zh": "中文",
   "common.loading": "Loading…",
@@ -280,6 +282,7 @@ const zh: Record<MessageKey, string> = {
   "invite.revoked": "这个邀请链接已失效，请向群组成员要一个新的。",
   "invite.notFound": "这个邀请链接不存在，请确认链接复制完整。",
   "invite.blocked": "这个账号不能加入群组。",
+  "invite.pending": "你的注册申请还在等待管理员审核。审核通过后再打开这个链接即可加入。",
   "lang.en": "English",
   "lang.zh": "中文",
   "common.loading": "加载中…",

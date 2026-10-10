@@ -74,21 +74,24 @@ export async function groupsOf(env: Env, userId: string): Promise<GroupSummary[]
   return results.map((g) => summary(g, g.member_count));
 }
 
+/**
+ * The group with its members, oldest first. Members' emails stay private: someone who joined
+ * through a forwarded link may not know the others.
+ */
 export async function groupDetail(env: Env, group: GroupRow): Promise<GroupDetail> {
   const { results } = await env.DB.prepare(
-    `SELECT u.id, u.name, u.email, u.picture, u.status, m.joined_at
+    `SELECT u.id, u.name, u.picture, u.status, m.joined_at
      FROM group_members m JOIN users u ON u.id = m.user_id
      WHERE m.group_id = ? ORDER BY m.joined_at, u.id`,
   )
     .bind(group.id)
-    .all<{ id: string; name: string; email: string; picture: string | null; status: string; joined_at: string }>();
+    .all<{ id: string; name: string; picture: string | null; status: string; joined_at: string }>();
   return {
     ...summary(group, results.length),
     createdAt: group.created_at,
     members: results.map((u) => ({
       id: u.id,
       name: u.name,
-      email: u.email,
       picture: u.picture,
       deactivated: u.status === "deactivated",
       joinedAt: u.joined_at,

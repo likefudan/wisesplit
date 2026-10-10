@@ -171,6 +171,10 @@ function GroupView({ id, me }: { id: string; me: User }) {
       await run();
     } catch (err) {
       setActionError(err);
+      // The list may be out of date (someone left meanwhile): show it as it is now.
+      api<{ group: GroupDetail }>(path)
+        .then((r) => setGroup(r.group))
+        .catch(() => {});
     } finally {
       setBusy(false);
     }
@@ -225,7 +229,6 @@ function GroupView({ id, me }: { id: string; me: User }) {
                       </span>
                     ))}
                 </div>
-                <div class="muted small">{m.email}</div>
               </div>
               {isOwner && m.id !== me.id && (
                 <div class="user-actions">
@@ -272,10 +275,9 @@ function AddMember({ path, onAdded }: { path: string; onAdded: (group: GroupDeta
     setBusy(true);
     setMessage(null);
     try {
-      const { group } = await api<{ group: GroupDetail }>(`${path}/members`, { email });
+      const { group, added } = await api<{ group: GroupDetail; added: string }>(`${path}/members`, { email });
       onAdded(group);
-      const added = group.members.find((m) => m.email.toLowerCase() === email.trim().toLowerCase());
-      setMessage({ ok: true, name: added?.name ?? email.trim() });
+      setMessage({ ok: true, name: group.members.find((m) => m.id === added)?.name ?? email.trim() });
       setEmail("");
     } catch (err) {
       setMessage({ ok: false, error: err });

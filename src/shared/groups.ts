@@ -17,7 +17,6 @@ export interface GroupSummary {
 export interface GroupMember {
   id: string;
   name: string;
-  email: string;
   picture: string | null;
   /** Deactivated by the site admin: still listed, since their records stay. */
   deactivated: boolean;
