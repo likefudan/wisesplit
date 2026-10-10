@@ -91,10 +91,9 @@ export function ExpenseList({ group, me, onChange }: { group: GroupDetail; me: U
     try {
       const page = await api<ExpensePage>(before ? `${path}?before=${encodeURIComponent(before)}` : path);
       // An expense moved to an older day since the last page may come again: shown once, as it is now.
+      const fresh = new Set(page.expenses.map((e) => e.id));
       setExpenses((list) =>
-        before && list
-          ? [...list.filter((x) => !page.expenses.some((e) => e.id === x.id)), ...page.expenses]
-          : page.expenses,
+        before && list ? [...list.filter((x) => !fresh.has(x.id)), ...page.expenses] : page.expenses,
       );
       setNext(page.next);
     } catch (err) {
@@ -240,12 +239,16 @@ function ExpenseRow({
             ))}
           </ul>
         </div>
-        {error !== null && (
-          <ErrorMessage>
-            {error instanceof ApiError && error.code === "expense_changed"
-              ? t("expense.changedBeforeDelete")
-              : errorText(error)}
-          </ErrorMessage>
+        {fixed ? (
+          <p class="muted small">{t("expense.cannotDelete")}</p>
+        ) : (
+          error !== null && (
+            <ErrorMessage>
+              {error instanceof ApiError && error.code === "expense_changed"
+                ? t("expense.changedBeforeDelete")
+                : errorText(error)}
+            </ErrorMessage>
+          )
         )}
         <div class="actions expense-actions">
           <a

@@ -214,6 +214,8 @@ const en = {
   "expense.delete": "Delete",
   "expense.confirmDelete": "Delete “{description}”? It will still show in the group's activity.",
   "expense.edited": "edited",
+  "expense.cannotDelete":
+    "Someone in this expense has left the group, and what they owe or are owed can't change, so it can't be deleted.",
   "expense.changedBeforeDelete":
     "Someone changed this expense meanwhile; it now shows their version. Delete it again if you still want to.",
   "expenseEdit.title": "Edit expense",
@@ -440,6 +442,7 @@ const zh: Record<MessageKey, string> = {
   "expense.delete": "删除",
   "expense.confirmDelete": "确定删除“{description}”吗？群组动态里仍会保留这条记录。",
   "expense.edited": "已修改",
+  "expense.cannotDelete": "这笔账里有人已退出群组，他们的应收或应付不能再变，所以这笔账不能删除。",
   "expense.changedBeforeDelete": "这笔账刚被别人改过，现在显示的是最新版本。如果仍要删除，请再点一次删除。",
   "expenseEdit.title": "编辑账目",
   "expenseEdit.reload": "载入最新版本",
