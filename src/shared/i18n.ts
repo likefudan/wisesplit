@@ -62,7 +62,7 @@ const en = {
   "admin.action.reject": "Reject",
   "admin.action.deactivate": "Deactivate",
   "admin.action.reactivate": "Reactivate",
-  "admin.confirm.deactivate": "Deactivate {name}? They will no longer be able to sign in.",
+  "admin.confirm.deactivate": "Deactivate {name}? They will no longer be able to use the site.",
   "admin.settings.title": "Site settings",
   "admin.settings.requireApproval": "New sign-ups require approval",
   "admin.settings.requireApprovalHint":
@@ -162,7 +162,7 @@ const zh: Record<MessageKey, string> = {
   "admin.action.reject": "拒绝",
   "admin.action.deactivate": "停用",
   "admin.action.reactivate": "恢复",
-  "admin.confirm.deactivate": "确定停用 {name} 吗？停用后对方将无法登录。",
+  "admin.confirm.deactivate": "确定停用 {name} 吗？停用后对方将无法使用本站。",
   "admin.settings.title": "网站设置",
   "admin.settings.requireApproval": "新用户注册需要审核",
   "admin.settings.requireApprovalHint": "关闭后，新用户注册后即可直接使用。人机验证和每日注册上限仍然有效。",

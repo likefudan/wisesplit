@@ -21,7 +21,11 @@ const callbackUrl = (env: Env) => `${new URL(env.SITE_ORIGIN).origin}/api/auth/g
 
 /** Where to land after Google: a path on this site only (no other host, no "//evil" or "/\\evil"). */
 export const safeNext = (v: string | undefined) =>
-  v && /^\/[\w/-]*(\?[\w=&%.-]*)?$/.test(v) && !v.startsWith("//") ? v : "/";
+  v && /^\/[\w/.~-]*(\?[\w=&%.+~:,-]*)?$/.test(v) && !v.startsWith("//") ? v : "/";
+
+/** The page saying why sign-in did not work, with the page to come back to after trying again. */
+const loginError = (error: string, next = "/") =>
+  `/login?error=${error}${next === "/" ? "" : `&next=${encodeURIComponent(next)}`}`;
 
 /** Only HTTPS pictures from Google's image hosts; anything else is dropped (the page shows initials). */
 export function profilePicture(value: unknown): string | null {
@@ -84,7 +88,7 @@ function readPending(cookie: string | undefined): PendingSignIn | null {
 
 // Starts Google sign-in: Authorization Code with PKCE, a random state and a nonce.
 authRoutes.get("/google", async (c) => {
-  if (!googleEnabled(c.env)) return c.redirect("/login?error=not_configured");
+  if (!googleEnabled(c.env)) return c.redirect(loginError("not_configured"));
   const pending: PendingSignIn = {
     state: randomToken(),
     nonce: randomToken(),
@@ -116,15 +120,17 @@ authRoutes.get("/google", async (c) => {
 
 authRoutes.get("/google/callback", async (c) => {
   const state = c.req.query("state") ?? "";
-  if (!/^[\w-]{43}$/.test(state)) return c.redirect("/login?error=invalid_state");
-  const saved = readPending(getCookie(c, stateCookie(c, state)));
+  const valid = /^[\w-]{43}$/.test(state);
+  const saved = valid ? readPending(getCookie(c, stateCookie(c, state))) : null;
   // Used up whatever happens next: one sign-in per visit to Google.
-  deleteCookie(c, stateCookie(c, state), cookieOptions(c));
+  if (valid) deleteCookie(c, stateCookie(c, state), cookieOptions(c));
+  const next = safeNext(saved?.next);
+  // Cancelled at Google: say so, even if the sign-in had already run out meanwhile.
+  if (c.req.query("error")) return c.redirect(loginError("cancelled", next));
   if (!googleEnabled(c.env) || !saved || !timingSafeEqual(state, saved.state))
-    return c.redirect("/login?error=invalid_state");
-  if (c.req.query("error")) return c.redirect("/login?error=cancelled");
+    return c.redirect(loginError("invalid_state"));
   const code = c.req.query("code");
-  if (!code) return c.redirect("/login?error=failed");
+  if (!code) return c.redirect(loginError("failed", next));
   let identity: SessionRow;
   try {
     const res = await fetch("https://oauth2.googleapis.com/token", {
@@ -166,10 +172,10 @@ authRoutes.get("/google/callback", async (c) => {
   } catch (err) {
     // Never log codes, tokens or Google's answers; the kind of failure is enough.
     console.warn("google sign-in failed:", err instanceof Error ? err.name : "unknown");
-    return c.redirect("/login?error=failed");
+    return c.redirect(loginError("failed", next));
   }
   await startSession(c, identity);
-  return c.redirect(safeNext(saved.next));
+  return c.redirect(next);
 });
 
 // Sign-up, and re-applying after a rejection: the display name, the language the page is in, and

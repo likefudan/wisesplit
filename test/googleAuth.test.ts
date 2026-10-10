@@ -163,6 +163,17 @@ describe("Google sign-in", () => {
     expect(res.headers.get("Location")).toBe("/login?error=invalid_state");
   });
 
+  it("keeps the page to come back to when sign-in fails, and says 'cancelled' even after the state ran out", async () => {
+    const start = await begin("/admin?status=rejected");
+    const res = await get(`/api/auth/google/callback?state=${start.state}&error=access_denied`, start.cookie);
+    expect(res.headers.get("Location")).toBe(
+      `/login?error=cancelled&next=${encodeURIComponent("/admin?status=rejected")}`,
+    );
+    const late = await get(`/api/auth/google/callback?state=${start.state}&error=access_denied`);
+    expect(late.headers.get("Location")).toBe("/login?error=cancelled");
+    expect(safeNext("/groups/a.b~c?q=a+b&x=1,2")).toBe("/groups/a.b~c?q=a+b&x=1,2");
+  });
+
   it("reports a sign-in cancelled at Google", async () => {
     const start = await begin();
     const res = await get(`/api/auth/google/callback?state=${start.state}&error=access_denied`, start.cookie);

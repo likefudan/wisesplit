@@ -48,7 +48,7 @@ function ProfileForm({ user }: { user: User }) {
       <form class="form" onSubmit={save}>
         <label class="field">
           <span>{t("profile.name")}</span>
-          <input value={name} onInput={(e) => setName(e.currentTarget.value)} maxLength={50} required />
+          <input value={name} onInput={(e) => setName(e.currentTarget.value)} required />
         </label>
         <label class="field">
           <span>{t("profile.venmo")}</span>

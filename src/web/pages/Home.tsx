@@ -15,19 +15,13 @@ import { Turnstile } from "../turnstile";
 export function Home() {
   const { t } = useI18n();
   const session = useSession();
-  const errorText = useErrorText();
   if (session.state === "loading")
     return (
       <Page>
         <Loading />
       </Page>
     );
-  if (session.state === "error")
-    return (
-      <Page>
-        <ErrorMessage>{errorText(session.error)}</ErrorMessage>
-      </Page>
-    );
+  if (session.state === "error") return <SessionError error={session.error} />;
   const { identity, user } = session.data;
   if (!identity) return <SignedOut session={session.data} />;
   if (!user)
@@ -73,6 +67,8 @@ export function SignedOut({ session, next }: { session: Session; next?: string }
   const { t } = useI18n();
   const { query } = useLocation();
   const loginError = `login.error.${query.error}`;
+  // Back from a failed Google sign-in: try again towards the page it started from.
+  next ??= query.next;
   const href = `/api/auth/google${next ? `?next=${encodeURIComponent(next)}` : ""}`;
   return (
     <Page title={t("home.hello")}>
@@ -129,13 +125,7 @@ function SignupForm({ session, again }: { session: Session; again?: boolean }) {
       {!again && <p>{t("signup.intro", { email: session.identity?.email ?? "" })}</p>}
       <label class="field">
         <span>{t("signup.name")}</span>
-        <input
-          value={name}
-          onInput={(e) => setName(e.currentTarget.value)}
-          maxLength={50}
-          required
-          autoComplete="name"
-        />
+        <input value={name} onInput={(e) => setName(e.currentTarget.value)} required autoComplete="name" />
       </label>
       {needsTurnstile && <Turnstile siteKey={session.turnstileSiteKey!} onToken={setToken} resetKey={resetKey} />}
       {error && <ErrorMessage>{error}</ErrorMessage>}
@@ -148,6 +138,20 @@ function SignupForm({ session, again }: { session: Session; again?: boolean }) {
         </button>
       </div>
     </form>
+  );
+}
+
+/** The session could not be loaded (offline, server error): say so, with a way to try again. */
+export function SessionError({ error }: { error: unknown }) {
+  const { t } = useI18n();
+  const errorText = useErrorText();
+  return (
+    <Page>
+      <ErrorMessage>{errorText(error)}</ErrorMessage>
+      <button type="button" class="button" onClick={() => refreshSession()}>
+        {t("common.retry")}
+      </button>
+    </Page>
   );
 }
 

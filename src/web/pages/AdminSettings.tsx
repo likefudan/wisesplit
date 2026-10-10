@@ -25,11 +25,13 @@ function SettingsForm() {
       pendingCap: String(s.pendingCap),
     });
 
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
+    setMessage(null);
     api<{ settings: Settings }>("/api/admin/settings")
       .then((r) => show(r.settings))
       .catch((e) => setMessage({ ok: false, error: e }));
-  }, []);
+  }, [attempt]);
 
   async function save(e: Event) {
     e.preventDefault();
@@ -59,7 +61,12 @@ function SettingsForm() {
       </p>
       {!form ? (
         message && !message.ok ? (
-          <ErrorMessage>{errorText(message.error)}</ErrorMessage>
+          <>
+            <ErrorMessage>{errorText(message.error)}</ErrorMessage>
+            <button type="button" class="button" onClick={() => setAttempt((n) => n + 1)}>
+              {t("common.retry")}
+            </button>
+          </>
         ) : (
           <Loading />
         )
