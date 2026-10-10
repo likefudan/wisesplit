@@ -7,6 +7,7 @@ import { Avatar, ErrorMessage, Loading, Page, useErrorText } from "../components
 import { currencyLabel, formatDate } from "../format";
 import { useI18n } from "../i18n";
 import { RequireUser } from "../RequireUser";
+import { Balances, ExpenseList } from "./Expenses";
 import type { User } from "../session";
 
 /** The signed-in user's groups, on the front page. */
@@ -205,10 +206,9 @@ function GroupView({ id, me }: { id: string; me: User }) {
     <Page title={group.name}>
       <p class="muted">{t("group.currency", { currency: currencyLabel(group.currency, lang) })}</p>
 
-      <section>
-        <h2>{t("group.expenses")}</h2>
-        <p class="muted">{t("group.expensesSoon")}</p>
-      </section>
+      {/* Someone added or removed changes who is listed. */}
+      <Balances key={group.members.map((m) => m.id).join()} group={group} me={me} />
+      <ExpenseList group={group} me={me} />
 
       <section>
         <h2>
