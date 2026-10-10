@@ -27,6 +27,7 @@ export function Home() {
   if (!user)
     return (
       <Page title={t("signup.title")}>
+        <LoginErrorNote />
         <SignupForm session={session.data} />
       </Page>
     );
@@ -34,6 +35,7 @@ export function Home() {
     case "pending":
       return (
         <Page title={t("status.pending.title")}>
+          <LoginErrorNote />
           <p>{t("status.pending.body", { name: user.name })}</p>
           <SignOutButton />
         </Page>
@@ -41,6 +43,7 @@ export function Home() {
     case "rejected":
       return (
         <Page title={t("status.rejected.title")}>
+          <LoginErrorNote />
           <p>{t("status.rejected.body")}</p>
           <SignupForm session={session.data} again />
         </Page>
@@ -48,6 +51,7 @@ export function Home() {
     case "deactivated":
       return (
         <Page title={t("status.deactivated.title")}>
+          <LoginErrorNote />
           <p>{t("status.deactivated.body")}</p>
           <SignOutButton />
         </Page>
@@ -55,6 +59,7 @@ export function Home() {
     case "approved":
       return (
         <Page title={t("home.welcome", { name: user.name })}>
+          <LoginErrorNote />
           <p class="lead">{t("app.tagline")}</p>
           <p>{t("home.comingSoon")}</p>
         </Page>
@@ -66,7 +71,6 @@ export function Home() {
 export function SignedOut({ session, next }: { session: Session; next?: string }) {
   const { t } = useI18n();
   const { query } = useLocation();
-  const loginError = `login.error.${query.error}`;
   // Back from a failed Google sign-in: try again towards the page it started from.
   next ??= query.next;
   const href = `/api/auth/google${next ? `?next=${encodeURIComponent(next)}` : ""}`;
@@ -74,7 +78,7 @@ export function SignedOut({ session, next }: { session: Session; next?: string }
     <Page title={t("home.hello")}>
       <p class="lead">{t("app.tagline")}</p>
       <p>{t("home.signedOut")}</p>
-      {query.error && <ErrorMessage>{isMessageKey(loginError) ? t(loginError) : t("login.error.failed")}</ErrorMessage>}
+      <LoginErrorNote />
       {session.googleEnabled ? (
         // target="_top": a real page load to the Worker, not a route inside this app.
         <a class="button" href={href} target="_top">
@@ -85,6 +89,18 @@ export function SignedOut({ session, next }: { session: Session; next?: string }
       )}
     </Page>
   );
+}
+
+/**
+ * Why a Google sign-in did not work (/login?error=…). Shown on every version of the page: a
+ * browser still signed in to another account sees it too, and stays signed in to that one.
+ */
+function LoginErrorNote() {
+  const { t } = useI18n();
+  const { query } = useLocation();
+  if (!query.error) return null;
+  const key = `login.error.${query.error}`;
+  return <ErrorMessage>{isMessageKey(key) ? t(key) : t("login.error.failed")}</ErrorMessage>;
 }
 
 /** Signing up, or applying again after a rejection. */

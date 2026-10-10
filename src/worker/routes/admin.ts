@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { ADMIN_ACTIONS, type AdminAction, USER_STATUSES, type UserStatus } from "../../shared/users";
-import { type AppEnv, adminEmails, isAdminEmail, requireAdmin, type UserRow } from "../auth";
+import { type AppEnv, isAdminEmail, requireAdmin, type UserRow } from "../auth";
 import { HttpError, now, readJson } from "../http";
 import { getSettings, updateSettings } from "../settings";
 import { publicUser } from "../users";
@@ -40,24 +40,20 @@ adminRoutes.post("/users/:id/:action", async (c) => {
   const action = ADMIN_ACTIONS[name as AdminAction];
   const admin = c.get("user");
   const id = c.req.param("id");
+  const target = await c.env.DB.prepare("SELECT email FROM users WHERE id = ?").bind(id).first<{ email: string }>();
+  if (!target) throw new HttpError(404, "not_found", "No such user");
+  // Admins (this one included) come and go only through ADMIN_EMAILS.
+  if (isAdminEmail(c.env, target.email))
+    throw new HttpError(400, "cannot_change_admin", "Admins are set by ADMIN_EMAILS, not here");
   const from = action.from.map(() => "?").join(", ");
-  // Admins (this one included) come and go only through ADMIN_EMAILS. Both rules are checked in
-  // the statement that makes the change, so neither another admin's click nor the user's email
-  // changing at a Google sign-in can slip in between.
-  const admins = adminEmails(c.env);
-  const notAdmin = admins.length ? `AND lower(email) NOT IN (${admins.map(() => "?").join(", ")})` : "";
+  // The status and the email just checked are re-checked in the statement that makes the change,
+  // so neither another admin's click nor the email changing at a Google sign-in can slip in.
   const updated = await c.env.DB.prepare(
-    `UPDATE users SET status = ?, decided_at = ?, decided_by = ? WHERE id = ? AND status IN (${from}) ${notAdmin} RETURNING *`,
+    `UPDATE users SET status = ?, decided_at = ?, decided_by = ? WHERE id = ? AND email = ? AND status IN (${from}) RETURNING *`,
   )
-    .bind(action.to, now(), admin.id, id, ...action.from, ...admins)
+    .bind(action.to, now(), admin.id, id, target.email, ...action.from)
     .first<UserRow>();
-  if (!updated) {
-    const target = await c.env.DB.prepare("SELECT email FROM users WHERE id = ?").bind(id).first<{ email: string }>();
-    if (!target) throw new HttpError(404, "not_found", "No such user");
-    if (isAdminEmail(c.env, target.email))
-      throw new HttpError(400, "cannot_change_admin", "Admins are set by ADMIN_EMAILS, not here");
-    throw new HttpError(409, "wrong_status", "The user's status has changed; reload the list");
-  }
+  if (!updated) throw new HttpError(409, "wrong_status", "The user's status has changed; reload the list");
   return c.json({ user: publicUser(c.env, updated) });
 });
 

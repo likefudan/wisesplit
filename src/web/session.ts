@@ -28,14 +28,16 @@ function publish(next: SessionState) {
 
 /** Loads the session again, e.g. after signing up or saving the profile; every page using it updates. */
 export async function refreshSession(): Promise<void> {
+  // A retry after an error shows that it is trying.
+  if (current.state === "error") publish({ state: "loading" });
   try {
     const data = await api<Session>("/api/auth/session");
-    const choice = choiceWhileLoading;
-    choiceWhileLoading = null;
     publish({ state: "ok", data });
     if (data.user?.status !== "approved") return;
-    // A language picked while this loaded is the newest choice: save it. Otherwise the language
-    // saved in the profile wins over this browser's.
+    // A language picked before it could be saved (while loading, or before approval) is the
+    // newest choice: save it. Otherwise the language saved in the profile wins over this browser's.
+    const choice = unsavedChoice;
+    unsavedChoice = null;
     if (choice && choice !== data.user.lang) chooseLang(choice);
     else if (data.user.lang !== currentLang()) setLang(data.user.lang);
   } catch (e) {
@@ -59,7 +61,7 @@ export function useSession(): SessionState {
 }
 
 let langSaves: Promise<void> = Promise.resolve();
-let choiceWhileLoading: Lang | null = null;
+let unsavedChoice: Lang | null = null;
 
 /**
  * Switches the pages' language. Signed-in users keep the choice in their profile, so it follows
@@ -68,8 +70,10 @@ let choiceWhileLoading: Lang | null = null;
  */
 export function chooseLang(next: Lang) {
   setLang(next);
-  if (current.state === "loading") choiceWhileLoading = next;
-  if (current.state !== "ok" || current.data.user?.status !== "approved") return;
+  if (current.state !== "ok" || current.data.user?.status !== "approved") {
+    unsavedChoice = next;
+    return;
+  }
   langSaves = langSaves.then(async () => {
     try {
       setUser((await api<{ user: User }>("/api/me", { lang: next })).user);
