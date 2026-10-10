@@ -58,6 +58,12 @@ curl -i -X POST http://localhost:8787/api/test/login -H 'Origin: http://localhos
 - A balance is what someone paid minus their shares, worked out from the expenses each time (no stored totals to go stale).
 - Each expense added also goes into `activity_log`, which later PRs add edits, deletions, payments and membership changes to.
 
+### Receipt photos
+
+- Each expense can have one receipt photo. The browser shrinks it before sending (longest side 1600px, JPEG quality 0.7, `src/web/receipts.tsx`); redrawing it on a canvas also drops its EXIF (GPS position, camera). The server takes JPEGs up to 2 MB and strips any metadata and thumbnails left anyway (`stripJpegMetadata` in `src/worker/receipts.ts`).
+- Photos live in an R2 bucket (binding `RECEIPTS`: `wisesplit-receipts`, and `wisesplit-staging-receipts` for the test site) and are served only through the Worker, to the group's members (`src/worker/routes/receipts.ts`). Any member may add, replace or remove one; each change goes into `activity_log` (`receipt.added`, `receipt.replaced`, `receipt.removed`).
+- A `receipts` row ties a photo to its expense. Deleting a group deletes its photos straight away; anything else left in the bucket without a row (a failed upload, a deleted expense) is removed by a daily cron run of the Worker (`cleanUpReceipts`). Locally, `curl "http://localhost:8787/cdn-cgi/local/scheduled"` runs it by hand.
+
 ### Languages
 
 Every string on the pages comes from `src/shared/i18n.ts`, which holds an English and a Chinese table with the same keys. Add both when adding a message; the type checker catches a missing Chinese entry and `test/i18n.test.ts` checks the `{placeholders}` match. The chosen language is remembered in the browser; a first visit follows the browser's preferred language.
@@ -69,7 +75,7 @@ Every string on the pages comes from `src/shared/i18n.ts`, which holds an Englis
 - **Merge to `main`** → the same checks, then deploy to staging (migrate its D1 database, deploy the `wisesplit-staging` Worker, smoke test it).
 - **Release** → Actions → *Release* → *Run workflow* on `main` tags it `vYYYY.MM.DD` and deploys production after backing up its database. Running CI by hand on an older tag redeploys that version's code. It cannot undo database migrations, so only roll back to a tag that already has every migration in `migrations/` (otherwise restore the backup the release made, from that run's artifacts).
 
-Each environment has its own Worker, D1 database and custom domain (`wrangler.jsonc`). CI finds the database by name, creating it on first deploy, and writes its id into `wrangler.jsonc` in place of the placeholder (`scripts/resolve-d1.mjs`).
+Each environment has its own Worker, D1 database and custom domain (`wrangler.jsonc`). Each also has its own R2 bucket for receipt photos. CI finds the database by name, creating it on first deploy, and writes its id into `wrangler.jsonc` in place of the placeholder (`scripts/resolve-d1.mjs`); it creates a missing bucket the same way (`scripts/ensure-r2.mjs`). R2 must be turned on for the Cloudflare account once (dashboard → R2), which its free tier covers.
 
 ### One-time setup
 
@@ -78,7 +84,7 @@ In the GitHub repository's *Settings → Secrets and variables → Actions*, add
 | Secret | What it is |
 | --- | --- |
 | `CLOUDFLARE_ACCOUNT_ID` | The Cloudflare account that owns the `llmat.dev` zone |
-| `CLOUDFLARE_API_TOKEN` | An API token with *Account: Workers Scripts: Edit*, *Account: D1: Edit*, *Zone (llmat.dev): Workers Routes: Edit* and *Zone (llmat.dev): DNS: Edit* |
+| `CLOUDFLARE_API_TOKEN` | An API token with *Account: Workers Scripts: Edit*, *Account: D1: Edit*, *Account: Workers R2 Storage: Edit*, *Zone (llmat.dev): Workers Routes: Edit* and *Zone (llmat.dev): DNS: Edit* |
 
 For sign-in (each deploy copies these onto the Worker as secrets; one left unset keeps whatever the Worker has):
 
