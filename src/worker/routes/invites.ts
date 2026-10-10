@@ -21,7 +21,8 @@ inviteRoutes.get("/:token", async (c) => {
     groupName: invite.group_name,
     invitedBy: invite.inviter_name,
     state: invite.state,
-    memberOf: user && (await isMember(c.env, invite.group_id, user.id)) ? invite.group_id : null,
+    // Only someone who can open the group is sent there.
+    memberOf: user?.status === "approved" && (await isMember(c.env, invite.group_id, user.id)) ? invite.group_id : null,
   };
   return c.json({ invite: info });
 });

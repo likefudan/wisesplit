@@ -164,6 +164,8 @@ const en = {
   "error.owner_cannot_leave": "The owner can't leave the group.",
   "error.group_not_settled": "Everyone in the group needs to be settled up first.",
   "error.invite_not_found": "This invite link doesn't exist.",
+  "error.too_many_invites":
+    "You already have 10 unused invite links for this group. Use those first, or wait for them to expire.",
   "error.invite_unusable": "This invite link has expired, was already used, or no longer works.",
 } as const;
 
@@ -321,6 +323,7 @@ const zh: Record<MessageKey, string> = {
   "error.owner_cannot_leave": "群主不能退出群组。",
   "error.group_not_settled": "需要群组里每个人都结清后才可以。",
   "error.invite_not_found": "这个邀请链接不存在。",
+  "error.too_many_invites": "你在这个群组已有 10 个未使用的邀请链接，请先用掉它们或等它们过期。",
   "error.invite_unusable": "这个邀请链接已过期、已被使用或已失效。",
 };
 

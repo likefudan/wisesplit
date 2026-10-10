@@ -104,7 +104,7 @@ describe("invite links", () => {
     expect((await json(res)).error.code).toBe("signup_required");
   });
 
-  it("stop working once their maker leaves the group or is deactivated", async () => {
+  it("stop working once their maker is deactivated or leaves the group", async () => {
     const { owner, group } = await groupWithInvite();
     const maker = await makeUser("approved", undefined, "Mo");
     await post(`/api/groups/${group.id}/members`, owner.cookie, { email: maker.email });
@@ -115,13 +115,16 @@ describe("invite links", () => {
     await env.DB.prepare("UPDATE users SET status = 'approved' WHERE id = ?").bind(maker.id).run();
     expect((await json(await send(`/api/invites/${first}`))).invite.state).toBe("valid");
     await post(`/api/groups/${group.id}/members/${maker.id}/remove`, owner.cookie);
-    // Not even the maker can get back in with it.
+    // Removing them deletes them: not even the maker can get back in with one.
     for (const token of [first, second]) {
-      expect((await json(await send(`/api/invites/${token}`))).invite.state).toBe("revoked");
-      expect((await post(`/api/invites/${token}/accept`, maker.cookie)).status).toBe(410);
+      expect((await send(`/api/invites/${token}`)).status).toBe(404);
+      expect((await post(`/api/invites/${token}/accept`, maker.cookie)).status).toBe(404);
     }
     mockTurnstile();
-    expect((await registerWith(await signIn(uniqueEmail()), first)).status).toBe(410);
+    expect((await registerWith(await signIn(uniqueEmail()), first)).status).toBe(404);
+    // And stay dead if they are added back.
+    await post(`/api/groups/${group.id}/members`, owner.cookie, { email: maker.email });
+    expect((await send(`/api/invites/${second}`)).status).toBe(404);
   });
 
   it("are left for someone else when the user joined another way meanwhile", async () => {
@@ -134,6 +137,27 @@ describe("invite links", () => {
     await expect(joinByInvite(env, token, user)).rejects.toMatchObject({ code: "invite_unusable" });
     expect((await json(await send(`/api/invites/${token}`))).invite.state).toBe("valid");
     expect(await json(await post(`/api/invites/${token}/accept`, friend.cookie))).toEqual({ groupId: group.id });
+  });
+
+  it("are limited to 10 unused ones per member and group", async () => {
+    const { owner, group } = await groupWithInvite();
+    for (let i = 1; i < 10; i++) expect((await post(`/api/groups/${group.id}/invites`, owner.cookie)).status).toBe(200);
+    const res = await post(`/api/groups/${group.id}/invites`, owner.cookie);
+    expect(res.status).toBe(429);
+    expect((await json(res)).error.code).toBe("too_many_invites");
+    // Expired ones no longer count.
+    await env.DB.prepare("UPDATE group_invites SET expires_at = ? WHERE group_id = ?")
+      .bind(new Date(Date.now() - 1000).toISOString(), group.id)
+      .run();
+    expect((await post(`/api/groups/${group.id}/invites`, owner.cookie)).status).toBe(200);
+  });
+
+  it("are not shown as the way in to a deactivated member", async () => {
+    const { token } = await groupWithInvite();
+    const friend = await makeUser("approved");
+    await post(`/api/invites/${token}/accept`, friend.cookie);
+    await env.DB.prepare("UPDATE users SET status = 'deactivated' WHERE id = ?").bind(friend.id).run();
+    expect((await json(await send(`/api/invites/${token}`, { cookie: friend.cookie }))).invite.memberOf).toBeNull();
   });
 
   it("are gone with their group", async () => {

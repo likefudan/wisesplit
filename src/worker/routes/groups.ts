@@ -1,16 +1,8 @@
 import { Hono } from "hono";
 import { INVITE_DAYS } from "../../shared/groups";
 import { type AppEnv, requireApproved } from "../auth";
-import {
-  groupDetail,
-  groupForMember,
-  groupsOf,
-  mayDelete,
-  mayLeave,
-  noSuchGroup,
-  parseCurrency,
-  parseGroupName,
-} from "../groups";
+import { groupDetail, groupForMember, groupsOf, mayDelete, mayLeave, parseCurrency, parseGroupName } from "../groups";
+import type { Env } from "../env";
 import { HttpError, now, readJson, str } from "../http";
 import { randomId, randomToken, sha256 } from "../lib/crypto";
 
@@ -19,6 +11,7 @@ export const groupRoutes = new Hono<AppEnv>();
 groupRoutes.use("*", requireApproved);
 
 const notSettled = () => new HttpError(409, "group_not_settled", "Everyone in the group must be settled up first");
+const userNotFound = () => new HttpError(404, "user_not_found", "No approved user has this email");
 const ownerOnly = () => new HttpError(403, "owner_only", "Only the group's owner can do this");
 
 groupRoutes.get("/", async (c) => c.json({ groups: await groupsOf(c.env, c.get("user").id) }));
@@ -64,7 +57,7 @@ groupRoutes.post("/:id/members", async (c) => {
   )
     .bind(email)
     .first<{ id: string }>();
-  if (!user) throw new HttpError(404, "user_not_found", "No approved user has this email");
+  if (!user) throw userNotFound();
   let added: unknown = null;
   try {
     // The one adding must still be in the group, and the one added still approved.
@@ -80,9 +73,29 @@ groupRoutes.post("/:id/members", async (c) => {
     if (!(err instanceof Error && /UNIQUE|PRIMARY KEY/i.test(err.message))) throw err;
     throw new HttpError(409, "already_member", "Already in this group");
   }
-  if (!added) throw noSuchGroup();
+  // Not added: either the adder has just left the group (404 below) or the user was deactivated.
+  if (!added) {
+    await groupForMember(c.env, group.id, me.id);
+    throw userNotFound();
+  }
   return c.json({ group: await groupDetail(c.env, group) });
 });
+
+/**
+ * Takes someone out of a group, with the invite links they made for it that are still unused: a
+ * link stops working with its maker (src/worker/invites.ts), and stays dead if they come back.
+ */
+const removeMember = (env: Env, groupId: string, userId: string) =>
+  env.DB.batch([
+    env.DB.prepare("DELETE FROM group_members WHERE group_id = ? AND user_id = ? RETURNING user_id").bind(
+      groupId,
+      userId,
+    ),
+    env.DB.prepare("DELETE FROM group_invites WHERE group_id = ? AND created_by = ? AND used_at IS NULL").bind(
+      groupId,
+      userId,
+    ),
+  ]);
 
 // The owner removes someone else.
 groupRoutes.post("/:id/members/:userId/remove", async (c) => {
@@ -92,12 +105,8 @@ groupRoutes.post("/:id/members/:userId/remove", async (c) => {
   if (group.owner_id !== me.id) throw ownerOnly();
   if (userId === me.id) throw new HttpError(400, "owner_cannot_leave", "The owner can't leave the group");
   if (!(await mayLeave(c.env, group.id, userId))) throw notSettled();
-  const removed = await c.env.DB.prepare(
-    "DELETE FROM group_members WHERE group_id = ? AND user_id = ? RETURNING user_id",
-  )
-    .bind(group.id, userId)
-    .first();
-  if (!removed) throw new HttpError(404, "not_a_member", "Not in this group");
+  const [removed] = await removeMember(c.env, group.id, userId);
+  if (!removed?.results.length) throw new HttpError(404, "not_a_member", "Not in this group");
   return c.json({ group: await groupDetail(c.env, group) });
 });
 
@@ -106,7 +115,7 @@ groupRoutes.post("/:id/leave", async (c) => {
   const group = await groupForMember(c.env, c.req.param("id"), me.id);
   if (group.owner_id === me.id) throw new HttpError(400, "owner_cannot_leave", "The owner can't leave the group");
   if (!(await mayLeave(c.env, group.id, me.id))) throw notSettled();
-  await c.env.DB.prepare("DELETE FROM group_members WHERE group_id = ? AND user_id = ?").bind(group.id, me.id).run();
+  await removeMember(c.env, group.id, me.id);
   return c.body(null, 204);
 });
 
@@ -120,22 +129,28 @@ groupRoutes.post("/:id/delete", async (c) => {
   return c.body(null, 204);
 });
 
-// A new invite link. The token is returned once; only its hash is kept.
+// A new invite link. The token is returned once; only its hash is kept. Each link lets someone
+// skip the approval queue, so a member may only have a few unused ones in a group at a time.
+const MAX_OPEN_INVITES = 10;
+
 groupRoutes.post("/:id/invites", async (c) => {
   const me = c.get("user");
   const group = await groupForMember(c.env, c.req.param("id"), me.id);
   const token = randomToken();
-  const at = new Date();
-  const expiresAt = new Date(at.getTime() + INVITE_DAYS * 86400_000).toISOString();
-  await c.env.DB.batch([
+  const at = now();
+  const expiresAt = new Date(Date.parse(at) + INVITE_DAYS * 86400_000).toISOString();
+  const [, insert] = await c.env.DB.batch([
     // Expired links are of no further interest (used ones are kept until then, to say so).
-    c.env.DB.prepare("DELETE FROM group_invites WHERE group_id = ? AND expires_at <= ?").bind(
-      group.id,
-      at.toISOString(),
-    ),
+    c.env.DB.prepare("DELETE FROM group_invites WHERE group_id = ? AND expires_at <= ?").bind(group.id, at),
+    // Counted in the statement that adds the link, so parallel requests can't get past the limit.
     c.env.DB.prepare(
-      "INSERT INTO group_invites (token_hash, group_id, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
-    ).bind(await sha256(token), group.id, me.id, at.toISOString(), expiresAt),
+      `INSERT INTO group_invites (token_hash, group_id, created_by, created_at, expires_at)
+       SELECT ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM group_invites
+         WHERE group_id = ? AND created_by = ? AND used_at IS NULL) < ?
+       RETURNING token_hash`,
+    ).bind(await sha256(token), group.id, me.id, at, expiresAt, group.id, me.id, MAX_OPEN_INVITES),
   ]);
+  if (!insert?.results.length)
+    throw new HttpError(429, "too_many_invites", `At most ${MAX_OPEN_INVITES} unused invite links per member`);
   return c.json({ token, expiresAt });
 });
