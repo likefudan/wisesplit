@@ -84,7 +84,7 @@ export function SignedOut({ session, next }: { session: Session; next?: string }
           {t("login.google")}
         </a>
       ) : (
-        <p class="muted">{t("login.notConfigured")}</p>
+        <p class="muted">{t("login.error.not_configured")}</p>
       )}
     </Page>
   );

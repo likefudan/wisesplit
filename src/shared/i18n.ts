@@ -17,7 +17,6 @@ const en = {
   "home.signedOut":
     "Sign in with your Google account to get started. New accounts are checked by the site admin before they can be used.",
   "login.google": "Sign in with Google",
-  "login.notConfigured": "Google sign-in is not set up on this site yet.",
   "login.error.not_configured": "Google sign-in is not set up on this site yet.",
   "login.error.invalid_state": "That sign-in link expired or was already used. Please try again.",
   "login.error.cancelled": "Sign-in was cancelled.",
@@ -104,7 +103,7 @@ const en = {
   "error.turnstile_unavailable": "The human check is not available right now. Please try again later.",
   "error.signup_cap_reached": "Today's sign-ups are full. Please try again tomorrow.",
   "error.pending_full": "Too many sign-ups are waiting for approval. Please try again later.",
-  "error.cannot_change_self": "You can't change your own account here.",
+  "error.cannot_change_admin": "Admins are set in the site's configuration, not here.",
   "error.wrong_status": "This user's status has changed. Reload the list.",
 } as const;
 
@@ -118,7 +117,6 @@ const zh: Record<MessageKey, string> = {
   "home.welcome": "你好，{name}！",
   "home.signedOut": "用 Google 账号登录即可开始。新账号需要网站管理员审核通过后才能使用。",
   "login.google": "用 Google 登录",
-  "login.notConfigured": "本站还没有开通 Google 登录。",
   "login.error.not_configured": "本站还没有开通 Google 登录。",
   "login.error.invalid_state": "登录链接已过期或已被使用，请重新登录。",
   "login.error.cancelled": "已取消登录。",
@@ -204,7 +202,7 @@ const zh: Record<MessageKey, string> = {
   "error.turnstile_unavailable": "人机验证暂时不可用，请稍后再试。",
   "error.signup_cap_reached": "今天的注册名额已满，请明天再试。",
   "error.pending_full": "等待审核的申请太多了，请稍后再试。",
-  "error.cannot_change_self": "不能在这里修改自己的账号。",
+  "error.cannot_change_admin": "管理员由网站配置决定，不能在这里修改。",
   "error.wrong_status": "这个用户的状态已经变了，请刷新列表。",
 };
 

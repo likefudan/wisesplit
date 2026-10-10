@@ -7,9 +7,9 @@ import { HttpError, readJson, str } from "../http";
 import { fromBase64Url, pkceChallenge, randomToken, timingSafeEqual, toBase64Url } from "../lib/crypto";
 import { turnstileConfigured, verifyTurnstile } from "../turnstile";
 import { googleName, parseLang, parseName, publicUser, register } from "../users";
-import { testLoginEnabled } from "./testLogin";
 
-const STATE_COOKIE = "ws_oauth";
+/** One cookie per sign-in in progress, named by its state, so two tabs signing in don't clash. */
+const stateCookie = (state: string) => `ws_oauth_${state.slice(0, 16)}`;
 const STATE_MINUTES = 10;
 const googleKeys = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
 
@@ -44,7 +44,6 @@ authRoutes.get("/session", async (c) => {
   return c.json({
     googleEnabled: googleEnabled(c.env),
     turnstileSiteKey: turnstileConfigured(c.env) ? c.env.TURNSTILE_SITE_KEY! : null,
-    testLogin: testLoginEnabled(c.env),
     identity: session ? { email: session.email, name: session.name, picture: session.picture } : null,
     user: user ? publicUser(c.env, user) : null,
   });
@@ -91,7 +90,7 @@ authRoutes.get("/google", async (c) => {
     expires: Date.now() + STATE_MINUTES * 60_000,
   };
   const value = toBase64Url(new TextEncoder().encode(JSON.stringify(pending)));
-  setCookie(c, STATE_COOKIE, value, { ...cookieOptions(c), maxAge: STATE_MINUTES * 60 });
+  setCookie(c, stateCookie(pending.state), value, { ...cookieOptions(c), maxAge: STATE_MINUTES * 60 });
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   url.search = new URLSearchParams({
     client_id: c.env.GOOGLE_CLIENT_ID!,
@@ -109,10 +108,11 @@ authRoutes.get("/google", async (c) => {
 
 authRoutes.get("/google/callback", async (c) => {
   const state = c.req.query("state") ?? "";
-  const saved = readPending(getCookie(c, STATE_COOKIE));
+  if (!/^[\w-]{43}$/.test(state)) return c.redirect("/login?error=invalid_state");
+  const saved = readPending(getCookie(c, stateCookie(state)));
   // Used up whatever happens next: one sign-in per visit to Google.
-  deleteCookie(c, STATE_COOKIE, cookieOptions(c));
-  if (!googleEnabled(c.env) || !saved || !state || !timingSafeEqual(state, saved.state))
+  deleteCookie(c, stateCookie(state), cookieOptions(c));
+  if (!googleEnabled(c.env) || !saved || !timingSafeEqual(state, saved.state))
     return c.redirect("/login?error=invalid_state");
   if (c.req.query("error")) return c.redirect("/login?error=cancelled");
   const code = c.req.query("code");

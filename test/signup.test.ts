@@ -35,7 +35,7 @@ const count = async (sql: string, ...args: unknown[]) =>
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  await env.DB.prepare("DELETE FROM settings").run();
+  await env.DB.batch([env.DB.prepare("DELETE FROM settings"), env.DB.prepare("DELETE FROM signup_days")]);
 });
 
 describe("signing up", () => {
@@ -113,14 +113,14 @@ describe("signing up", () => {
     for (const [body, code] of [
       [{ name: "   " }, "invalid_name"],
       [{ name: "x".repeat(51) }, "invalid_name"],
-      [{ name: "bad\u0007name" }, "invalid_name"],
+      [{ name: "\u0007\u0000" }, "invalid_name"],
       [{ lang: "fr" }, "invalid_lang"],
     ] as const) {
       const res = await register(cookie, body);
       expect(res.status).toBe(400);
       expect((await json(res)).error.code).toBe(code);
     }
-    const ok = await register(cookie, { name: "  Two   Spaces  " });
+    const ok = await register(cookie, { name: "  Two \u0007  Spaces\n " });
     expect((await json(ok)).user.name).toBe("Two Spaces");
   });
 
@@ -149,17 +149,37 @@ describe("signing up", () => {
 
   it("stops at the daily cap, re-applications included, and tells the person", async () => {
     mockTurnstile();
-    const today = `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
-    const already = await count("SELECT COUNT(*) AS n FROM users WHERE applied_at >= ?", today);
-    await setSettings({ daily_signup_cap: String(already + 1), require_approval: "0" });
+    await setSettings({ daily_signup_cap: "2" });
+    const rejected = await makeUser("rejected");
     expect((await register(await signIn(uniqueEmail()))).status).toBe(200);
+    expect((await register(rejected.cookie)).status).toBe(200);
     const full = await register(await signIn(uniqueEmail()));
     expect(full.status).toBe(429);
     expect((await json(full)).error.code).toBe("signup_cap_reached");
+    // Admins still get in.
+    const boss = await send("/api/auth/register", {
+      cookie: await signIn(ADMIN_EMAIL, "sub-cap-admin"),
+      body: { name: "Boss", lang: "en", turnstileToken: "good" },
+      env: TURNSTILE,
+    });
+    expect(boss.status).toBe(200);
+  });
+
+  it("a cap of 0 closes sign-ups, and a sign-up turned away gives its place back", async () => {
+    mockTurnstile();
+    await setSettings({ daily_signup_cap: "0" });
+    expect((await json(await register(await signIn(uniqueEmail())))).error.code).toBe("signup_cap_reached");
+    const pending = await count("SELECT COUNT(*) AS n FROM users WHERE status = 'pending'");
+    await setSettings({ daily_signup_cap: "5", pending_cap: String(pending) });
+    expect((await json(await register(await signIn(uniqueEmail())))).error.code).toBe("pending_full");
+    expect(await count("SELECT COALESCE(SUM(count), 0) AS n FROM signup_days")).toBe(0);
+  });
+
+  it("sends a re-application to the admin even when approval is off", async () => {
+    mockTurnstile();
+    await setSettings({ require_approval: "0" });
     const rejected = await makeUser("rejected");
-    // makeUser applied today too; the cap was already reached before it.
-    const again = await register(rejected.cookie);
-    expect((await json(again)).error.code).toBe("signup_cap_reached");
+    expect((await json(await register(rejected.cookie))).user.status).toBe("pending");
   });
 
   it("pauses while the pending list is full, but not when approval is off", async () => {
@@ -221,16 +241,14 @@ describe("what each kind of account may do", () => {
   });
 
   it("approves an admin who applied before being named admin, so the site can't lock them out", async () => {
-    for (const status of ["pending", "rejected"] as const) {
+    for (const status of ["pending", "rejected", "deactivated"] as const) {
       const late = await makeUser(status);
       const before = await send("/api/me", { cookie: late.cookie });
       expect(before.status).toBe(403);
       const res = await send("/api/auth/session", { cookie: late.cookie, env: { ADMIN_EMAILS: late.email } });
       expect((await json(res)).user).toMatchObject({ status: "approved", isAdmin: true });
+      const row = await env.DB.prepare("SELECT decided_by FROM users WHERE id = ?").bind(late.id).first();
+      expect(row).toEqual({ decided_by: null });
     }
-    // Deactivation is the admin's own decision and stands.
-    const off = await makeUser("deactivated");
-    const res = await send("/api/me", { cookie: off.cookie, env: { ADMIN_EMAILS: off.email } });
-    expect(res.status).toBe(403);
   });
 });

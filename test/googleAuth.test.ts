@@ -69,7 +69,7 @@ describe("Google sign-in", () => {
     expect(url.searchParams.get("nonce")).toBeTruthy();
     expect(url.searchParams.get("redirect_uri")).toBe(`${ORIGIN}/api/auth/google/callback`);
     expect(url.searchParams.get("client_secret")).toBeNull();
-    expect(cookie).toMatch(/^ws_oauth=/);
+    expect(cookie).toMatch(/^ws_oauth_[\w-]{16}=/);
   });
 
   it("says so when Google sign-in is not set up", async () => {
@@ -93,16 +93,18 @@ describe("Google sign-in", () => {
       user: null,
     });
     // The sign-in in progress is used up.
-    expect(response.headers.getSetCookie().some((h) => /^ws_oauth=;/.test(h))).toBe(true);
+    expect(response.headers.getSetCookie().some((h) => /^ws_oauth_[\w-]{16}=;/.test(h))).toBe(true);
   });
 
   it("refuses a sign-in in progress that has run out or was tampered with", async () => {
     const start = await begin();
-    const value = start.cookie.slice("ws_oauth=".length);
+    const [name, value] = start.cookie.split("=") as [string, string];
     const pending = JSON.parse(atob(value.replace(/-/g, "+").replace(/_/g, "/")));
     for (const cookie of [
-      `ws_oauth=${btoa(JSON.stringify({ ...pending, expires: Date.now() - 1 }))}`,
-      "ws_oauth=not-json",
+      `${name}=${btoa(JSON.stringify({ ...pending, expires: Date.now() - 1 }))}`,
+      `${name}=not-json`,
+      // Another sign-in's cookie doesn't count for this one.
+      `ws_oauth_someone-elses-st=${value}`,
       "",
     ]) {
       const res = await get(`/api/auth/google/callback?state=${start.state}&code=c`, cookie);
@@ -130,6 +132,14 @@ describe("Google sign-in", () => {
     const { response, cookie } = await login(claims, options);
     expect(response.headers.get("Location")).toBe("/login?error=failed");
     expect(cookie).toBe("");
+  });
+
+  it("lets two tabs sign in at the same time", async () => {
+    const first = await begin();
+    await begin();
+    const res = await get(`/api/auth/google/callback?state=${first.state}&error=access_denied`, first.cookie);
+    // Past the state check: the first tab's sign-in is still its own.
+    expect(res.headers.get("Location")).toBe("/login?error=cancelled");
   });
 
   it("refuses a callback whose state does not match this browser's", async () => {

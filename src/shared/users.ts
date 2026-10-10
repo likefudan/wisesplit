@@ -16,3 +16,15 @@ export const actionsFor = (status: UserStatus) =>
   (Object.keys(ADMIN_ACTIONS) as AdminAction[]).filter((a) =>
     (ADMIN_ACTIONS[a].from as readonly UserStatus[]).includes(status),
   );
+
+/** A user as the API shows them: to themselves, and to the admin (src/worker/users.ts `publicUser`). */
+export interface PublicUser {
+  id: string;
+  name: string;
+  email: string;
+  picture: string | null;
+  venmo: string | null;
+  lang: "en" | "zh";
+  status: UserStatus;
+  isAdmin: boolean;
+}

@@ -1,4 +1,5 @@
 import { isLang, type Lang } from "../shared/i18n";
+import type { PublicUser } from "../shared/users";
 import { isAdmin, isAdminEmail, type SessionRow, type UserRow, userByGoogle } from "./auth";
 import type { Env } from "./env";
 import { HttpError, now } from "./http";
@@ -7,11 +8,13 @@ import { getSettings } from "./settings";
 
 export const NAME_MAX = 50;
 
-/** A display name: trimmed, inner whitespace collapsed, 1 to 50 characters, no control characters. */
+/** A name as stored: trimmed, inner whitespace (control characters included) collapsed to one space. */
+const tidyName = (value: unknown) => (typeof value === "string" ? value.replace(/[\s\p{Cc}]+/gu, " ").trim() : "");
+
+/** A display name: tidied, then 1 to 50 characters. */
 export function parseName(value: unknown): string {
-  const name = typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting control characters is the point
-  if (!name || [...name].length > NAME_MAX || /[\u0000-\u001f\u007f]/.test(name))
+  const name = tidyName(value);
+  if (!name || [...name].length > NAME_MAX)
     throw new HttpError(400, "invalid_name", `Display name must be 1 to ${NAME_MAX} characters`);
   return name;
 }
@@ -35,12 +38,12 @@ export function parseLang(value: unknown): Lang {
 
 /** The name Google gives, cut to fit; the sign-up form shows it for the person to keep or change. */
 export function googleName(name: unknown, email: string): string {
-  const text = typeof name === "string" ? name.trim().replace(/\s+/g, " ") : "";
-  return [...(text || email.split("@")[0] || email)].slice(0, NAME_MAX).join("");
+  const text = tidyName(name) || tidyName(email.split("@")[0]) || "?";
+  return [...text].slice(0, NAME_MAX).join("").trim();
 }
 
 /** What a user may see about themselves (and the admin about everyone). */
-export function publicUser(env: Env, user: UserRow) {
+export function publicUser(env: Env, user: UserRow): PublicUser {
   return {
     id: user.id,
     name: user.name,
@@ -53,18 +56,17 @@ export function publicUser(env: Env, user: UserRow) {
   };
 }
 
-/** Midnight UTC today: the daily sign-up cap counts applications from here on. */
-const startOfDay = () => `${now().slice(0, 10)}T00:00:00.000Z`;
+const alreadyRegistered = () => new HttpError(409, "already_registered", "This Google account has already signed up");
 
 /**
  * Signs up the Google identity of `session` (`existing` null), or re-applies after a rejection
- * (`existing` is the rejected user; the caller has checked it is one). The application is
- * approved at once when the admin has turned approval off, or when the applicant is an admin;
- * otherwise it waits in the pending list. The daily cap applies either way, the pending cap only
- * to applications that will wait; admins skip both so they can never be locked out.
+ * (`existing` is the rejected user; the caller has checked it is one).
  *
- * The caps are checked in the same statement that writes the row, so parallel sign-ups can't
- * all slip in under the limit.
+ * A new sign-up is approved at once when the admin has turned approval off; a re-application
+ * always waits for the admin, who rejected it before. Admins are approved at once and skip both
+ * caps, so they can never be locked out. Everyone else takes one of the day's places (the daily
+ * cap), and applications that will wait also need room on the pending list (the pending cap).
+ * Each limit is checked in the same statement that uses it, so parallel sign-ups can't all slip in.
  */
 export async function register(
   env: Env,
@@ -74,21 +76,28 @@ export async function register(
 ): Promise<UserRow> {
   const settings = await getSettings(env);
   const admin = isAdminEmail(env, session.email);
-  const status = admin || !settings.requireApproval ? "approved" : "pending";
-  const today = startOfDay();
+  const status = admin || (!existing && !settings.requireApproval) ? "approved" : "pending";
+  const day = now().slice(0, 10);
+  if (!admin) {
+    const place = await env.DB.prepare(
+      `INSERT INTO signup_days (day, count) SELECT ?, 1 WHERE ? > 0
+       ON CONFLICT (day) DO UPDATE SET count = count + 1 WHERE count < ? RETURNING count`,
+    )
+      .bind(day, settings.dailySignupCap, settings.dailySignupCap)
+      .first();
+    if (!place) throw new HttpError(429, "signup_cap_reached", "Today's sign-ups are full; try again tomorrow");
+  }
   const at = now();
-  // Bound as: [admin, today, dailyCap, status, pendingCap].
-  const room = `(? OR ((SELECT COUNT(*) FROM users WHERE applied_at >= ?) < ?
-    AND (? <> 'pending' OR (SELECT COUNT(*) FROM users WHERE status = 'pending') < ?)))`;
-  const roomArgs = [admin ? 1 : 0, today, settings.dailySignupCap, status, settings.pendingCap];
-  let saved: UserRow | null;
+  // Room on the pending list, bound as [status, pendingCap]; admins never wait, so never need it.
+  const room = `(? <> 'pending' OR (SELECT COUNT(*) FROM users WHERE status = 'pending') < ?)`;
+  let saved: UserRow | null = null;
   try {
     saved = existing
       ? await env.DB.prepare(
           `UPDATE users SET status = ?, name = ?, lang = ?, applied_at = ?, decided_at = NULL, decided_by = NULL
            WHERE id = ? AND status = 'rejected' AND ${room} RETURNING *`,
         )
-          .bind(status, input.name, input.lang, at, existing.id, ...roomArgs)
+          .bind(status, input.name, input.lang, at, existing.id, status, settings.pendingCap)
           .first<UserRow>()
       : await env.DB.prepare(
           `INSERT INTO users (id, google_sub, email, name, picture, lang, status, created_at, applied_at)
@@ -104,25 +113,20 @@ export async function register(
             status,
             at,
             at,
-            ...roomArgs,
+            status,
+            settings.pendingCap,
           )
           .first<UserRow>();
   } catch (err) {
     // Two tabs signing up the same account at once: the second hits the unique Google id.
-    if (err instanceof Error && /UNIQUE/i.test(err.message))
-      throw new HttpError(409, "already_registered", "This Google account has already signed up");
-    throw err;
+    if (!(err instanceof Error && /UNIQUE/i.test(err.message))) throw err;
+  } finally {
+    // Nothing was written: give the day's place back.
+    if (!saved && !admin)
+      await env.DB.prepare("UPDATE signup_days SET count = count - 1 WHERE day = ? AND count > 0").bind(day).run();
   }
-  if (!saved) {
-    const current = await userByGoogle(env, session.google_sub);
-    if (current && current.status !== "rejected")
-      throw new HttpError(409, "already_registered", "This Google account has already signed up");
-    const daily = await env.DB.prepare("SELECT COUNT(*) AS n FROM users WHERE applied_at >= ?")
-      .bind(today)
-      .first<{ n: number }>();
-    if ((daily?.n ?? 0) >= settings.dailySignupCap)
-      throw new HttpError(429, "signup_cap_reached", "Today's sign-ups are full; try again tomorrow");
-    throw new HttpError(429, "pending_full", "Too many sign-ups are waiting for approval; try again later");
-  }
-  return saved;
+  if (saved) return saved;
+  const current = await userByGoogle(env, session.google_sub);
+  if (current && current.status !== "rejected") throw alreadyRegistered();
+  throw new HttpError(429, "pending_full", "Too many sign-ups are waiting for approval; try again later");
 }

@@ -101,7 +101,7 @@ function UserList({ me }: { me: User }) {
                 <div class="muted small">{u.email}</div>
                 <div class="muted small">{t("admin.appliedAt", { date: date(u.appliedAt) })}</div>
               </div>
-              {u.id !== me.id && (
+              {!u.isAdmin && (
                 <div class="user-actions">
                   {actionsFor(u.status).map((a) => (
                     <button

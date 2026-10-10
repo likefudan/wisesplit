@@ -16,9 +16,6 @@ describe("test login (browser tests only)", () => {
       expect(res.status).toBe(404);
       expect(res.headers.get("Set-Cookie")).toBeNull();
     }
-    expect((await json(await send("/api/auth/session", { env: { TEST_LOGIN_SECRET: "s3cret" } }))).testLogin).toBe(
-      false,
-    );
   });
 
   it("is off on staging and locally unless its secret is set", async () => {

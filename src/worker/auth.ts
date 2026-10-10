@@ -86,8 +86,9 @@ export async function endSession<E extends { Bindings: Env }>(c: Context<E>): Pr
  * Who this browser is, in one query: its Google identity (null when signed out) and the user that
  * identity signed up as (null before signing up).
  *
- * An admin whose application is still pending or was rejected (they signed up before their email
- * was added to ADMIN_EMAILS) is approved here, so the admin can never be locked out.
+ * A user named in ADMIN_EMAILS is always approved: one who signed up before being named (and is
+ * still pending, or was rejected or deactivated) is approved here, on their first request after.
+ * The console can't change admins (routes/admin.ts), so the admin can never be locked out.
  */
 export async function signedIn<E extends { Bindings: Env }>(
   c: Context<E>,
@@ -105,9 +106,10 @@ export async function signedIn<E extends { Bindings: Env }>(
   const { s_sub, s_email, s_name, s_picture, ...user } = row;
   const session = { google_sub: s_sub, email: s_email, name: s_name, picture: s_picture };
   if (!user.id) return { session, user: null };
-  if ((user.status === "pending" || user.status === "rejected") && isAdminEmail(c.env, user.email)) {
+  if (user.status !== "approved" && isAdminEmail(c.env, user.email)) {
+    // Approved by being named admin, not by anyone in the console.
     const promoted = await c.env.DB.prepare(
-      "UPDATE users SET status = 'approved', decided_at = ? WHERE id = ? AND status IN ('pending', 'rejected') RETURNING *",
+      "UPDATE users SET status = 'approved', decided_at = ?, decided_by = NULL WHERE id = ? AND status <> 'approved' RETURNING *",
     )
       .bind(now(), user.id)
       .first<UserRow>();

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { type AppEnv, requireApproved, type UserRow } from "../auth";
-import { readJson } from "../http";
+import { HttpError, readJson } from "../http";
 import { parseLang, parseName, parseVenmo, publicUser } from "../users";
 
 /** The signed-in user's own profile: display name, Venmo username and the language of the pages. */
@@ -16,8 +16,12 @@ meRoutes.post("/", async (c) => {
   const name = "name" in body ? parseName(body.name) : user.name;
   const venmo = "venmo" in body ? parseVenmo(body.venmo) : user.venmo;
   const lang = "lang" in body ? parseLang(body.lang) : user.lang;
-  const saved = await c.env.DB.prepare("UPDATE users SET name = ?, venmo = ?, lang = ? WHERE id = ? RETURNING *")
+  // Still approved: an admin may have deactivated the account since this request was checked.
+  const saved = await c.env.DB.prepare(
+    "UPDATE users SET name = ?, venmo = ?, lang = ? WHERE id = ? AND status = 'approved' RETURNING *",
+  )
     .bind(name, venmo, lang, user.id)
     .first<UserRow>();
-  return c.json({ user: publicUser(c.env, saved!) });
+  if (!saved) throw new HttpError(403, "account_deactivated", "This account has been deactivated");
+  return c.json({ user: publicUser(c.env, saved) });
 });

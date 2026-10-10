@@ -1,25 +1,14 @@
 import { useEffect, useState } from "preact/hooks";
-import type { Lang } from "../shared/i18n";
-import type { UserStatus } from "../shared/users";
+import type { PublicUser } from "../shared/users";
 import { ApiError, api } from "./api";
 import { currentLang, setLang } from "./i18n";
 
-export interface User {
-  id: string;
-  name: string;
-  email: string;
-  picture: string | null;
-  venmo: string | null;
-  lang: Lang;
-  status: UserStatus;
-  isAdmin: boolean;
-}
+export type User = PublicUser;
 
 /** GET /api/auth/session: who is here (src/worker/routes/auth.ts). */
 export interface Session {
   googleEnabled: boolean;
   turnstileSiteKey: string | null;
-  testLogin: boolean;
   /** The Google account this browser is signed in with, before or after signing up. */
   identity: { email: string; name: string; picture: string | null } | null;
   /** The account, once signed up. */

@@ -10,14 +10,13 @@ CREATE TABLE users (
   lang TEXT NOT NULL DEFAULT 'en' CHECK (lang IN ('en', 'zh')),
   status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'deactivated')),
   created_at TEXT NOT NULL,
-  -- The latest application (a rejected user may apply again); counts toward the daily cap.
+  -- The latest application (a rejected user may apply again).
   applied_at TEXT NOT NULL,
   -- The admin's latest decision (approve, reject, deactivate, reactivate).
   decided_at TEXT,
   decided_by TEXT REFERENCES users (id)
 );
 CREATE INDEX users_status ON users (status, applied_at);
-CREATE INDEX users_applied_at ON users (applied_at);
 
 -- Browser sessions. Only the SHA-256 of the cookie value is stored. A session is a Google identity:
 -- it exists before the person has applied, so the sign-up form knows who is signing up.
@@ -31,6 +30,13 @@ CREATE TABLE sessions (
   expires_at TEXT NOT NULL
 );
 CREATE INDEX sessions_expires_at ON sessions (expires_at);
+
+-- Applications per UTC day (YYYY-MM-DD), for the daily sign-up cap. Each application counts,
+-- re-applications after a rejection included.
+CREATE TABLE signup_days (
+  day TEXT PRIMARY KEY,
+  count INTEGER NOT NULL
+);
 
 -- Site-wide settings the admin can change (see src/worker/settings.ts for keys and defaults).
 CREATE TABLE settings (

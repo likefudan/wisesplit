@@ -20,19 +20,12 @@ describe("admin console", () => {
     expect((await send("/api/admin/settings")).status).toBe(401);
   });
 
-  it("an admin who has been deactivated loses the console", async () => {
+  it("the console follows ADMIN_EMAILS", async () => {
     const res = await send("/api/admin/settings", {
       cookie: (await makeUser("approved")).cookie,
       env: { ADMIN_EMAILS: "" },
     });
     expect(res.status).toBe(403);
-    const deactivated = await makeUser("deactivated", `deact-${crypto.randomUUID().slice(0, 6)}@example.com`);
-    const res2 = await send("/api/admin/settings", {
-      cookie: deactivated.cookie,
-      env: { ADMIN_EMAILS: deactivated.email },
-    });
-    expect(res2.status).toBe(403);
-    expect((await json(res2)).error.code).toBe("account_deactivated");
   });
 
   it("lists the pending list oldest first", async () => {
@@ -74,7 +67,7 @@ describe("admin console", () => {
     expect((await json(await post(`/api/admin/users/${other.id}/approve`, boss.cookie))).user.status).toBe("approved");
   });
 
-  it("refuses actions that don't fit the user's state, unknown users, and the admin's own account", async () => {
+  it("refuses actions that don't fit the user's state, unknown users, and any admin", async () => {
     const boss = await admin();
     const member = await makeUser("approved");
     const wrong = await post(`/api/admin/users/${member.id}/reject`, boss.cookie);
@@ -84,7 +77,15 @@ describe("admin console", () => {
     expect((await post(`/api/admin/users/${member.id}/promote`, boss.cookie)).status).toBe(404);
     const self = await post(`/api/admin/users/${boss.id}/deactivate`, boss.cookie);
     expect(self.status).toBe(400);
-    expect((await json(self)).error.code).toBe("cannot_change_self");
+    expect((await json(self)).error.code).toBe("cannot_change_admin");
+    // Another admin, even one still on the pending list, is out of reach too.
+    const other = await makeUser("pending");
+    const res = await send(`/api/admin/users/${other.id}/reject`, {
+      cookie: boss.cookie,
+      body: {},
+      env: { ADMIN_EMAILS: `${boss.email},${other.email}` },
+    });
+    expect((await json(res)).error.code).toBe("cannot_change_admin");
   });
 
   it("has approval on by default, and saves the settings", async () => {

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { ADMIN_ACTIONS, type AdminAction, USER_STATUSES, type UserStatus } from "../../shared/users";
-import { type AppEnv, requireAdmin, type UserRow } from "../auth";
+import { type AppEnv, isAdminEmail, requireAdmin, type UserRow } from "../auth";
 import { HttpError, now, readJson } from "../http";
 import { getSettings, updateSettings } from "../settings";
 import { publicUser } from "../users";
@@ -36,7 +36,11 @@ adminRoutes.post("/users/:id/:action", async (c) => {
   const action = ADMIN_ACTIONS[name as AdminAction];
   const admin = c.get("user");
   const id = c.req.param("id");
-  if (id === admin.id) throw new HttpError(400, "cannot_change_self", "Admins can't change their own account");
+  const target = await c.env.DB.prepare("SELECT email FROM users WHERE id = ?").bind(id).first<{ email: string }>();
+  if (!target) throw new HttpError(404, "not_found", "No such user");
+  // Admins (this one included) come and go only through ADMIN_EMAILS.
+  if (isAdminEmail(c.env, target.email))
+    throw new HttpError(400, "cannot_change_admin", "Admins are set by ADMIN_EMAILS, not here");
   const placeholders = action.from.map(() => "?").join(", ");
   // Checked and changed in one statement, so two admins clicking at once can't both act.
   const updated = await c.env.DB.prepare(
@@ -44,11 +48,7 @@ adminRoutes.post("/users/:id/:action", async (c) => {
   )
     .bind(action.to, now(), admin.id, id, ...action.from)
     .first<UserRow>();
-  if (!updated) {
-    const exists = await c.env.DB.prepare("SELECT 1 FROM users WHERE id = ?").bind(id).first();
-    if (!exists) throw new HttpError(404, "not_found", "No such user");
-    throw new HttpError(409, "wrong_status", "The user's status has changed; reload the list");
-  }
+  if (!updated) throw new HttpError(409, "wrong_status", "The user's status has changed; reload the list");
   return c.json({ user: publicUser(c.env, updated) });
 });
 

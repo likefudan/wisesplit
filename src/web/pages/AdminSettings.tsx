@@ -1,15 +1,9 @@
 import { useEffect, useState } from "preact/hooks";
+import type { Settings } from "../../shared/settings";
 import { api } from "../api";
 import { ErrorMessage, Loading, Page, useErrorText } from "../components";
 import { useI18n } from "../i18n";
 import { RequireUser } from "../RequireUser";
-
-/** GET/POST /api/admin/settings (src/worker/settings.ts). */
-interface Settings {
-  requireApproval: boolean;
-  dailySignupCap: number;
-  pendingCap: number;
-}
 
 export function AdminSettings() {
   return <RequireUser admin>{() => <SettingsForm />}</RequireUser>;
