@@ -36,6 +36,10 @@ export interface Expense {
   shares: Share[];
   createdBy: string;
   createdAt: string;
+  /** When it was last edited; null if never. */
+  updatedAt: string | null;
+  /** Goes up by one with every edit; an edit names the version it started from. */
+  version: number;
 }
 
 /** What POST /api/groups/:id/expenses takes. */
@@ -46,6 +50,12 @@ export interface NewExpense {
   date: string;
   splitMethod: SplitMethod;
   participants: string[];
+}
+
+/** What POST /api/groups/:id/expenses/:expenseId takes: the whole expense again, as edited. */
+export interface ExpenseEdit extends NewExpense {
+  /** The version the edit started from (`Expense.version`). */
+  version: number;
 }
 
 export interface ExpensePage {

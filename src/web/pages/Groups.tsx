@@ -7,6 +7,7 @@ import { Avatar, ErrorMessage, Loading, Page, useErrorText } from "../components
 import { currencyLabel, formatDate } from "../format";
 import { useI18n } from "../i18n";
 import { RequireUser } from "../RequireUser";
+import { ActivityList } from "./Activity";
 import { Balances, ExpenseList } from "./Expenses";
 import type { User } from "../session";
 
@@ -136,6 +137,8 @@ function GroupView({ id, me }: { id: string; me: User }) {
   // Removing a member, leaving or deleting: what failed, shown next to the member list.
   const [actionError, setActionError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  // Counts the expenses deleted on this page, to load the balances and activity again.
+  const [changes, setChanges] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -206,9 +209,9 @@ function GroupView({ id, me }: { id: string; me: User }) {
     <Page title={group.name}>
       <p class="muted">{t("group.currency", { currency: currencyLabel(group.currency, lang) })}</p>
 
-      {/* Someone added or removed changes who is listed. */}
-      <Balances key={group.members.map((m) => m.id).join()} group={group} me={me} />
-      <ExpenseList group={group} me={me} />
+      {/* Someone added or removed changes who is listed; a deleted expense, the numbers. */}
+      <Balances key={`${group.members.map((m) => m.id).join()}/${changes}`} group={group} me={me} />
+      <ExpenseList group={group} me={me} onChange={() => setChanges((n) => n + 1)} />
 
       <section>
         <h2>
@@ -249,6 +252,8 @@ function GroupView({ id, me }: { id: string; me: User }) {
 
       <AddMember path={path} onAdded={setGroup} onError={lost} />
       <InviteLink path={path} onError={lost} />
+
+      <ActivityList key={`${group.members.map((m) => m.id).join()}/${changes}`} group={group} />
 
       <section>
         {isOwner ? (

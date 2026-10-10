@@ -1,3 +1,4 @@
+import type { ExpenseChange, ExpenseSnapshot } from "../shared/activity";
 import {
   type Balance,
   DESCRIPTION_MAX,
@@ -87,11 +88,13 @@ interface ExpenseRow {
   split_method: Expense["splitMethod"];
   created_by: string;
   created_at: string;
+  updated_at: string | null;
+  version: number;
   shares: string;
 }
 
 const EXPENSE_SELECT = `SELECT e.id, e.description, e.amount, e.paid_by, p.name AS paid_by_name, e.date,
-    e.split_method, e.created_by, e.created_at,
+    e.split_method, e.created_by, e.created_at, e.updated_at, e.version,
     (SELECT json_group_array(json_object('userId', s.user_id, 'name', u.name, 'amount', s.amount))
       FROM expense_shares s JOIN users u ON u.id = s.user_id WHERE s.expense_id = e.id) AS shares
   FROM expenses e JOIN users p ON p.id = e.paid_by`;
@@ -109,18 +112,22 @@ const toExpense = (r: ExpenseRow): Expense => ({
   shares: (JSON.parse(r.shares) as Share[]).sort((a, b) => (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0)),
   createdBy: r.created_by,
   createdAt: r.created_at,
+  updatedAt: r.updated_at,
+  version: r.version,
 });
 
+/** The expense, unless it was deleted. */
 export async function expenseById(env: Env, groupId: string, id: string): Promise<Expense | null> {
-  const row = await env.DB.prepare(`${EXPENSE_SELECT} WHERE e.group_id = ? AND e.id = ?`)
+  const row = await env.DB.prepare(`${EXPENSE_SELECT} WHERE e.group_id = ? AND e.id = ? AND e.deleted_at IS NULL`)
     .bind(groupId, id)
     .first<ExpenseRow>();
   return row ? toExpense(row) : null;
 }
 
 /**
- * One page of a group's expenses, newest day first (and, within a day, the last added first).
- * `before` is the id of the last expense on the previous page.
+ * One page of a group's expenses, newest day first (and, within a day, the last added first),
+ * leaving out deleted ones. `before` is the id of the last expense on the previous page (which
+ * may have been deleted since: the next page still starts after it).
  */
 export async function expensePage(
   env: Env,
@@ -135,10 +142,14 @@ export async function expensePage(
       .first<{ date: string; created_at: string; id: string }>();
     if (!after) throw new HttpError(400, "invalid_cursor", "No such expense to list from");
     statement = env.DB.prepare(
-      `${EXPENSE_SELECT} WHERE e.group_id = ? AND (e.date, e.created_at, e.id) < (?, ?, ?) ${ORDER} LIMIT ?`,
+      `${EXPENSE_SELECT} WHERE e.group_id = ? AND e.deleted_at IS NULL AND (e.date, e.created_at, e.id) < (?, ?, ?)
+       ${ORDER} LIMIT ?`,
     ).bind(groupId, after.date, after.created_at, after.id, size + 1);
   } else {
-    statement = env.DB.prepare(`${EXPENSE_SELECT} WHERE e.group_id = ? ${ORDER} LIMIT ?`).bind(groupId, size + 1);
+    statement = env.DB.prepare(`${EXPENSE_SELECT} WHERE e.group_id = ? AND e.deleted_at IS NULL ${ORDER} LIMIT ?`).bind(
+      groupId,
+      size + 1,
+    );
   }
   const { results } = await statement.all<ExpenseRow>();
   const expenses = results.slice(0, size).map(toExpense);
@@ -146,17 +157,18 @@ export async function expensePage(
 }
 
 /**
- * Everyone's balance in the group: what they paid minus their shares. Lists every member (in the
- * order they joined), and anyone who has left with a balance that is not 0 (which leaving rules
- * out, but the numbers must add up whatever happened).
+ * Everyone's balance in the group: what they paid minus their shares, in expenses that were not
+ * deleted. Lists every member (in the order they joined), and anyone who has left with a balance
+ * that is not 0 (which leaving rules out, but the numbers must add up whatever happened).
  */
 export async function balances(env: Env, groupId: string): Promise<Balance[]> {
   const { results } = await env.DB.prepare(
     `SELECT u.id, u.name, SUM(b.net) AS net, MIN(b.joined_at) AS joined_at FROM (
-       SELECT paid_by AS user_id, amount AS net, NULL AS joined_at FROM expenses WHERE group_id = ?
+       SELECT paid_by AS user_id, amount AS net, NULL AS joined_at FROM expenses
+         WHERE group_id = ? AND deleted_at IS NULL
        UNION ALL
        SELECT s.user_id, -s.amount, NULL FROM expense_shares s JOIN expenses e ON e.id = s.expense_id
-         WHERE e.group_id = ?
+         WHERE e.group_id = ? AND e.deleted_at IS NULL
        UNION ALL
        SELECT user_id, 0, joined_at FROM group_members WHERE group_id = ?
      ) b JOIN users u ON u.id = b.user_id
@@ -167,4 +179,44 @@ export async function balances(env: Env, groupId: string): Promise<Balance[]> {
     .bind(groupId, groupId, groupId)
     .all<{ id: string; name: string; net: number }>();
   return results.map((r) => ({ userId: r.id, name: r.name, net: r.net }));
+}
+
+/** The expense as the activity log keeps it. */
+export const snapshot = (e: {
+  description: string;
+  amount: number;
+  paidBy: string;
+  date: string;
+  splitMethod: Expense["splitMethod"];
+  shares: Share[] | Map<string, number>;
+}): ExpenseSnapshot => ({
+  description: e.description,
+  amount: e.amount,
+  paidBy: e.paidBy,
+  date: e.date,
+  splitMethod: e.splitMethod,
+  shares: Object.fromEntries(e.shares instanceof Map ? e.shares : e.shares.map((s) => [s.userId, s.amount])),
+});
+
+const sameShares = (a: Record<string, number>, b: Record<string, number>) =>
+  Object.keys(a).length === Object.keys(b).length && Object.entries(a).every(([id, units]) => b[id] === units);
+
+/** What an edit changes, field by field; null if nothing. */
+export function changeOf(before: ExpenseSnapshot, after: ExpenseSnapshot): ExpenseChange | null {
+  const change: ExpenseChange = { description: after.description, before: {}, after: {} };
+  for (const key of Object.keys(after) as (keyof ExpenseSnapshot)[]) {
+    const same = key === "shares" ? sameShares(before.shares, after.shares) : before[key] === after[key];
+    if (!same) {
+      (change.before as Record<string, unknown>)[key] = before[key];
+      (change.after as Record<string, unknown>)[key] = after[key];
+    }
+  }
+  return Object.keys(change.after).length ? change : null;
+}
+
+/** What the expense does to each person's balance: paid minus share, by user id. */
+export function netOf(e: ExpenseSnapshot): Map<string, number> {
+  const net = new Map<string, number>([[e.paidBy, e.amount]]);
+  for (const [id, units] of Object.entries(e.shares)) net.set(id, (net.get(id) ?? 0) - units);
+  return net;
 }

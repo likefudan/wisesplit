@@ -44,6 +44,8 @@ async function createGroup(page: Page, name: string, currency: string) {
 }
 
 const member = (page: Page, name: string) => page.locator(".user-row").filter({ hasText: name });
+const expense = (page: Page, text: string) => page.locator("details.expense").filter({ hasText: text });
+const balance = (page: Page, name: string) => page.locator(".balance-row").filter({ hasText: name });
 
 test("create a group, add a friend by email, and they can leave", async ({ browser }) => {
   const ownerEmail = unique("owner");
@@ -161,17 +163,16 @@ test("add expenses, see who owes whom, and leave once settled", async ({ browser
   await owner.getByRole("button", { name: "Save expense" }).click();
 
   await expect(owner.getByRole("heading", { name: "Road trip" })).toBeVisible();
-  const gas = owner.getByRole("listitem").filter({ hasText: "Gas" });
+  const gas = expense(owner, "Gas");
   await expect(gas).toContainText("Oct 3, 2026 · Payer Pat paid $30.01");
   await expect(gas).toContainText(/you lent \$15\.0[01]/);
-  const balance = (page: Page, name: string) => page.locator(".balance-row").filter({ hasText: name });
   await expect(balance(owner, "Payer Pat")).toContainText(/gets back \$15\.0[01]/);
   await expect(balance(owner, "Sharer Sam")).toContainText(/owes \$15\.0[01]/);
 
   // The friend owes money, so can't leave yet.
   await friend.goto("/");
   await friend.getByRole("link", { name: /Road trip/ }).click();
-  await expect(friend.getByRole("listitem").filter({ hasText: "Gas" })).toContainText(/you borrowed \$15\.0[01]/);
+  await expect(expense(friend, "Gas")).toContainText(/you borrowed \$15\.0[01]/);
   friend.once("dialog", (d) => d.accept());
   await friend.getByRole("button", { name: "Leave group" }).click();
   await expect(friend.getByRole("alert")).toContainText("Everyone in the group needs to be settled up first.");
@@ -190,4 +191,62 @@ test("add expenses, see who owes whom, and leave once settled", async ({ browser
   friend.once("dialog", (d) => d.accept());
   await friend.getByRole("button", { name: "退出群组" }).click();
   await expect(friend.getByRole("heading", { name: "你好，Sharer Sam！" })).toBeVisible();
+});
+
+test("edit and delete an expense, and see it in the activity", async ({ browser }) => {
+  const owner = await approvedUser(browser, unique("editor"), "Editor Eve");
+  const friendEmail = unique("fixer");
+  const friend = await approvedUser(browser, friendEmail, "Fixer Fay");
+  await createGroup(owner, "Ski week", "EUR");
+  await owner.getByLabel("Their Google email").fill(friendEmail);
+  await owner.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(owner.getByText("Fixer Fay was added.")).toBeVisible();
+  await owner.getByRole("link", { name: "Add expense" }).click();
+  await owner.getByLabel("Description").fill("Fondue");
+  await owner.getByLabel("Amount (EUR)").fill("20");
+  await owner.getByRole("button", { name: "Save expense" }).click();
+  await expect(expense(owner, "Fondue")).toContainText("you lent €10.00");
+
+  // Both open the edit form; the friend saves first.
+  await expense(owner, "Fondue").locator("summary").click();
+  await expense(owner, "Fondue").getByRole("link", { name: "Edit" }).click();
+  await expect(owner.getByRole("heading", { name: "Edit expense" })).toBeVisible();
+  await expect(owner.getByLabel("Amount (EUR)")).toHaveValue("20.00");
+  await friend.goto("/");
+  await friend.getByRole("link", { name: /Ski week/ }).click();
+  await expense(friend, "Fondue").locator("summary").click();
+  await expense(friend, "Fondue").getByRole("link", { name: "Edit" }).click();
+  await friend.getByLabel("Amount (EUR)").fill("30");
+  await friend.getByRole("button", { name: "Save expense" }).click();
+  await expect(expense(friend, "Fondue")).toContainText("Editor Eve paid €30.00 · edited");
+
+  // The owner's save is turned down instead of undoing the friend's change.
+  await owner.getByLabel("Description").fill("Cheese fondue");
+  await owner.getByRole("button", { name: "Save expense" }).click();
+  await expect(owner.getByRole("alert")).toContainText("Someone else changed this expense meanwhile.");
+  await owner.getByRole("button", { name: "Load the latest version" }).click();
+  await expect(owner.getByLabel("Amount (EUR)")).toHaveValue("30.00");
+  await expect(owner.getByLabel("Description")).toHaveValue("Fondue");
+  await owner.getByLabel("Description").fill("Cheese fondue");
+  await owner.getByRole("button", { name: "Save expense" }).click();
+  await expect(expense(owner, "Cheese fondue")).toContainText("you lent €15.00");
+
+  const activity = (page: Page) => page.locator(".activity-row");
+  await expect(activity(owner).first()).toContainText("Editor Eve edited “Cheese fondue”");
+  await expect(activity(owner).first()).toContainText("Description: “Fondue” → “Cheese fondue”");
+  await expect(activity(owner).nth(1)).toContainText("Fixer Fay edited “Fondue”");
+  await expect(activity(owner).nth(1)).toContainText("Amount: €20.00 → €30.00");
+  await expect(activity(owner).nth(1)).toContainText("Fixer Fay's share: €10.00 → €15.00");
+  await expect(activity(owner).nth(2)).toContainText("Editor Eve added “Fondue” (€20.00)");
+  await expect(activity(owner).nth(3)).toContainText("Editor Eve added Fixer Fay");
+  await expect(activity(owner).nth(4)).toContainText("Editor Eve created the group");
+
+  // Deleting it settles everyone up, and the activity keeps it.
+  await expect(balance(owner, "Fixer Fay")).toContainText("owes €15.00");
+  await expense(owner, "Cheese fondue").locator("summary").click();
+  owner.once("dialog", (d) => d.accept());
+  await expense(owner, "Cheese fondue").getByRole("button", { name: "Delete" }).click();
+  await expect(owner.getByText("No expenses yet.")).toBeVisible();
+  await expect(balance(owner, "Fixer Fay")).toContainText("settled up");
+  await expect(activity(owner).first()).toContainText("Editor Eve deleted “Cheese fondue” (€30.00)");
 });

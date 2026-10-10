@@ -48,26 +48,29 @@ export const isMember = async (env: Env, groupId: string, userId: string) =>
     .first());
 
 /**
- * SQL that is true while group ? is not settled up: someone's balance in it is not 0. Binds the
- * group id twice. (PR 7 adds: or a payment in it awaits confirmation.)
+ * SQL that is true while group ? is not settled up: someone's balance in it is not 0 (deleted
+ * expenses count for nothing). Binds the group id twice. (PR 7 adds: or a payment in it awaits
+ * confirmation.)
  */
 export const UNSETTLED_SQL = `EXISTS (SELECT 1 FROM (
-    SELECT paid_by AS user_id, amount AS net FROM expenses WHERE group_id = ?
+    SELECT paid_by AS user_id, amount AS net FROM expenses WHERE group_id = ? AND deleted_at IS NULL
     UNION ALL
-    SELECT s.user_id, -s.amount FROM expense_shares s JOIN expenses e ON e.id = s.expense_id WHERE e.group_id = ?
+    SELECT s.user_id, -s.amount FROM expense_shares s JOIN expenses e ON e.id = s.expense_id
+      WHERE e.group_id = ? AND e.deleted_at IS NULL
   ) GROUP BY user_id HAVING SUM(net) != 0)`;
 export const unsettledArgs = (groupId: string) => [groupId, groupId];
 
 /**
  * SQL that is true while user ? may not leave group ? (or be removed from it). The rule
  * (docs/mvp-scope.md §2): someone with any expense involving them, paid by them or shared by
- * them, may go only once the whole group is settled; someone with none may go any time. Written
+ * them, may go only once the whole group is settled; someone with none (or only deleted ones) may
+ * go any time. Written
  * as SQL so the check and the removal are one statement, and an expense added at the same moment
  * can't slip in between.
  */
-export const MAY_NOT_LEAVE_SQL = `((EXISTS (SELECT 1 FROM expenses WHERE group_id = ? AND paid_by = ?)
+export const MAY_NOT_LEAVE_SQL = `((EXISTS (SELECT 1 FROM expenses WHERE group_id = ? AND paid_by = ? AND deleted_at IS NULL)
     OR EXISTS (SELECT 1 FROM expense_shares s JOIN expenses e ON e.id = s.expense_id
-      WHERE e.group_id = ? AND s.user_id = ?))
+      WHERE e.group_id = ? AND s.user_id = ? AND e.deleted_at IS NULL))
   AND ${UNSETTLED_SQL})`;
 export const mayNotLeaveArgs = (groupId: string, userId: string) => [
   groupId,
