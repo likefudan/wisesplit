@@ -105,7 +105,8 @@ body {
   cursor: pointer;
 }
 
-.button:disabled {
+.button:disabled,
+.button.disabled {
   opacity: 0.6;
   cursor: default;
 }
@@ -135,6 +136,10 @@ body {
 
 .success {
   color: var(--success);
+}
+
+.warning {
+  color: var(--warning-text);
 }
 
 .header-actions {
@@ -351,7 +356,8 @@ h2 {
   padding: 0;
 }
 
-.balance-row {
+.balance-row,
+.suggestion-row {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
@@ -397,6 +403,24 @@ h2 {
   padding-left: 20px;
 }
 
+.subhead {
+  font-size: 15px;
+  margin: 16px 0 8px;
+  color: var(--muted);
+}
+
+.payment-actions {
+  margin-top: 8px;
+  gap: 8px;
+}
+
+.payment-row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .list-more {
   margin-top: 12px;
 }
@@ -418,4 +442,11 @@ h2 {
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.venmo-step {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
 }

@@ -10,6 +10,7 @@ import {
 } from "../shared/expenses";
 import { MAX_AMOUNT } from "../shared/money";
 import type { Env } from "./env";
+import { LEDGER_SQL, ledgerArgs } from "./groups";
 import { HttpError } from "./http";
 import { tidyName } from "./users";
 
@@ -146,17 +147,15 @@ export async function expensePage(
 }
 
 /**
- * Everyone's balance in the group: what they paid minus their shares. Lists every member (in the
- * order they joined), and anyone who has left with a balance that is not 0 (which leaving rules
- * out, but the numbers must add up whatever happened).
+ * Everyone's balance in the group: what they paid minus their shares, plus the confirmed payments
+ * they made minus those they received. Lists every member (in the order they joined), and anyone
+ * who has left with a balance that is not 0 (which leaving rules out, but the numbers must add up
+ * whatever happened).
  */
 export async function balances(env: Env, groupId: string): Promise<Balance[]> {
   const { results } = await env.DB.prepare(
     `SELECT u.id, u.name, SUM(b.net) AS net, MIN(b.joined_at) AS joined_at FROM (
-       SELECT paid_by AS user_id, amount AS net, NULL AS joined_at FROM expenses WHERE group_id = ?
-       UNION ALL
-       SELECT s.user_id, -s.amount, NULL FROM expense_shares s JOIN expenses e ON e.id = s.expense_id
-         WHERE e.group_id = ?
+       SELECT user_id, net, NULL AS joined_at FROM (${LEDGER_SQL})
        UNION ALL
        SELECT user_id, 0, joined_at FROM group_members WHERE group_id = ?
      ) b JOIN users u ON u.id = b.user_id
@@ -164,7 +163,7 @@ export async function balances(env: Env, groupId: string): Promise<Balance[]> {
      HAVING MIN(b.joined_at) IS NOT NULL OR SUM(b.net) != 0
      ORDER BY MIN(b.joined_at) IS NULL, MIN(b.joined_at), u.id`,
   )
-    .bind(groupId, groupId, groupId)
+    .bind(...ledgerArgs(groupId), groupId)
     .all<{ id: string; name: string; net: number }>();
   return results.map((r) => ({ userId: r.id, name: r.name, net: r.net }));
 }

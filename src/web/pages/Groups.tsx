@@ -8,6 +8,7 @@ import { currencyLabel, formatDate } from "../format";
 import { useI18n } from "../i18n";
 import { RequireUser } from "../RequireUser";
 import { Balances, ExpenseList } from "./Expenses";
+import { Payments } from "./Payments";
 import type { User } from "../session";
 
 /** The signed-in user's groups, on the front page. */
@@ -136,6 +137,8 @@ function GroupView({ id, me }: { id: string; me: User }) {
   // Removing a member, leaving or deleting: what failed, shown next to the member list.
   const [actionError, setActionError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  // Goes up when a payment is confirmed, declined or withdrawn: balances and payments reload.
+  const [version, setVersion] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -207,7 +210,8 @@ function GroupView({ id, me }: { id: string; me: User }) {
       <p class="muted">{t("group.currency", { currency: currencyLabel(group.currency, lang) })}</p>
 
       {/* Someone added or removed changes who is listed. */}
-      <Balances key={group.members.map((m) => m.id).join()} group={group} me={me} />
+      <Balances key={group.members.map((m) => m.id).join()} group={group} me={me} version={version} />
+      <Payments group={group} me={me} version={version} onChange={() => setVersion((n) => n + 1)} />
       <ExpenseList group={group} me={me} />
 
       <section>

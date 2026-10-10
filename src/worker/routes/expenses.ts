@@ -1,12 +1,13 @@
 import { Hono } from "hono";
 import { EXPENSES_PAGE } from "../../shared/expenses";
+import { simplifyDebts } from "../../shared/settlements";
 import type { AppEnv } from "../auth";
 import { balances, expenseById, expensePage, parseNewExpense } from "../expenses";
 import { groupForMember } from "../groups";
 import { HttpError, now, readJson } from "../http";
 import { randomId } from "../lib/crypto";
 
-/** A group's expenses and balances, under /api/groups/:id (behind requireApproved there). */
+/** A group's expenses, balances and suggested payments, under /api/groups/:id (behind requireApproved there). */
 export const expenseRoutes = new Hono<AppEnv>();
 
 expenseRoutes.get("/expenses", async (c) => {
@@ -16,7 +17,8 @@ expenseRoutes.get("/expenses", async (c) => {
 
 expenseRoutes.get("/balances", async (c) => {
   const group = await groupForMember(c.env, c.req.param("id")!, c.get("user").id);
-  return c.json({ balances: await balances(c.env, group.id) });
+  const list = await balances(c.env, group.id);
+  return c.json({ balances: list, suggestions: simplifyDebts(list) });
 });
 
 // Any member adds an expense, paid by any member and shared by any of them.

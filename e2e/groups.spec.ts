@@ -174,7 +174,7 @@ test("add expenses, see who owes whom, and leave once settled", async ({ browser
   await expect(friend.getByRole("listitem").filter({ hasText: "Gas" })).toContainText(/you borrowed \$15\.0[01]/);
   friend.once("dialog", (d) => d.accept());
   await friend.getByRole("button", { name: "Leave group" }).click();
-  await expect(friend.getByRole("alert")).toContainText("Everyone in the group needs to be settled up first.");
+  await expect(friend.getByRole("alert")).toContainText("Everyone in the group needs to be settled up first");
 
   // An expense paid by the friend, for the owner only, evens it up (in Chinese this time).
   await friend.getByRole("button", { name: "中文" }).click();
@@ -190,4 +190,92 @@ test("add expenses, see who owes whom, and leave once settled", async ({ browser
   friend.once("dialog", (d) => d.accept());
   await friend.getByRole("button", { name: "退出群组" }).click();
   await expect(friend.getByRole("heading", { name: "你好，Sharer Sam！" })).toBeVisible();
+});
+
+test("settle up: pay with a Venmo link, the payee confirms, then leave", async ({ browser }) => {
+  const owner = await approvedUser(browser, unique("venmo-payee"), "Payee Pia");
+  const res = await owner.request.post("/api/me", {
+    headers: { Origin: "http://localhost:8788" },
+    data: { venmo: "pia-pays" },
+  });
+  expect(res.status()).toBe(200);
+  const friendEmail = unique("venmo-payer");
+  const friend = await approvedUser(browser, friendEmail, "Payer Paz");
+  await createGroup(owner, "Camping weekend", "USD");
+  await owner.getByLabel("Their Google email").fill(friendEmail);
+  await owner.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(owner.getByText("Payer Paz was added.")).toBeVisible();
+  await expect(owner.getByText("No payments yet.")).toBeVisible();
+
+  await owner.getByRole("link", { name: "Add expense" }).click();
+  await owner.getByLabel("Description").fill("Campsite");
+  await owner.getByLabel("Amount (USD)").fill("30");
+  await owner.getByRole("button", { name: "Save expense" }).click();
+  await expect(owner.getByText("Payer Paz pays Payee Pia $15.00")).toBeVisible();
+
+  // The payer follows the suggestion: Venmo opens prefilled, then they say they've paid.
+  await friend.goto("/");
+  await friend.getByRole("link", { name: /Camping weekend/ }).click();
+  const suggestion = friend.locator(".suggestion-row").filter({ hasText: "Payer Paz pays Payee Pia $15.00" });
+  await suggestion.getByRole("link", { name: "Pay" }).click();
+  await expect(friend.getByRole("heading", { name: "Record a payment" })).toBeVisible();
+  await expect(friend.getByLabel("Amount (USD)")).toHaveValue("15.00");
+  const venmo = new URL((await friend.getByRole("link", { name: "Open Venmo" }).getAttribute("href"))!);
+  expect(venmo.origin).toBe("https://venmo.com");
+  expect(Object.fromEntries(venmo.searchParams)).toMatchObject({
+    recipients: "pia-pays",
+    amount: "15.00",
+    note: "wisesplit: Camping weekend",
+  });
+  await friend.getByRole("button", { name: "I've paid" }).click();
+
+  // Pending: listed apart, balances unchanged, and the payer can't leave yet.
+  await expect(friend.getByText("Waiting for Payee Pia to confirm it.")).toBeVisible();
+  const balance = (page: Page, name: string) => page.locator(".balance-row").filter({ hasText: name });
+  await expect(balance(friend, "Payer Paz")).toContainText("owes $15.00");
+  friend.once("dialog", (d) => d.accept());
+  await friend.getByRole("button", { name: "Leave group" }).click();
+  await expect(friend.getByRole("alert")).toContainText("no payments waiting for confirmation");
+
+  // The payee confirms it arrived; everyone is settled.
+  await owner.reload();
+  await expect(owner.getByText("Did it arrive?")).toBeVisible();
+  await owner.getByRole("button", { name: "Received" }).click();
+  await expect(balance(owner, "Payer Paz")).toContainText("settled up");
+  await expect(balance(owner, "Payee Pia")).toContainText("settled up");
+  await expect(owner.locator(".payment-row").filter({ hasText: "Payer Paz paid Payee Pia $15.00" })).toContainText(
+    "confirmed",
+  );
+
+  await friend.reload();
+  friend.once("dialog", (d) => d.accept());
+  await friend.getByRole("button", { name: "Leave group" }).click();
+  await expect(friend.getByRole("heading", { name: "Hi, Payer Paz!" })).toBeVisible();
+});
+
+test("record a cash payment in a non-dollar group, and the payee declines it", async ({ browser }) => {
+  const owner = await approvedUser(browser, unique("cash-payee"), "Cash Cleo");
+  const friendEmail = unique("cash-payer");
+  const friend = await approvedUser(browser, friendEmail, "Cash Cal");
+  await createGroup(owner, "Tokyo", "JPY");
+  await owner.getByLabel("Their Google email").fill(friendEmail);
+  await owner.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(owner.getByText("Cash Cal was added.")).toBeVisible();
+
+  await friend.goto("/");
+  await friend.getByRole("link", { name: /Tokyo/ }).click();
+  await friend.getByRole("link", { name: "Record a payment" }).click();
+  await expect(friend.getByRole("link", { name: "Open Venmo" })).toHaveCount(0);
+  await expect(friend.getByText("Venmo links are only for US-dollar groups.")).toBeVisible();
+  await friend.getByLabel("Amount (JPY)").fill("1000");
+  await friend.getByRole("button", { name: "Record payment" }).click();
+  await expect(friend.getByText("Waiting for Cash Cleo to confirm it.")).toBeVisible();
+
+  await owner.reload();
+  owner.once("dialog", (d) => d.accept());
+  await owner.getByRole("button", { name: "Didn't arrive" }).click();
+  await expect(owner.locator(".payment-row").filter({ hasText: "Cash Cal paid Cash Cleo ¥1,000" })).toContainText(
+    "didn't arrive",
+  );
+  await expect(owner.locator(".balance-row").filter({ hasText: "Cash Cal" })).toContainText("settled up");
 });
