@@ -180,11 +180,16 @@ expenseRoutes.post("/expenses/:expenseId", async (c) => {
   const args = unchangedArgs(group.id, id, version, people);
   const at = now();
   const results = await c.env.DB.batch([
-    c.env.DB.prepare(`DELETE FROM expense_shares WHERE expense_id = ? AND ${UNCHANGED_SQL}`).bind(id, ...args),
-    c.env.DB.prepare(
-      `INSERT INTO expense_shares (expense_id, user_id, amount)
-       SELECT ?, key, value FROM json_each(?) WHERE ${UNCHANGED_SQL}`,
-    ).bind(id, JSON.stringify(after.shares), ...args),
+    // The shares again, if they changed.
+    ...(change.after.shares
+      ? [
+          c.env.DB.prepare(`DELETE FROM expense_shares WHERE expense_id = ? AND ${UNCHANGED_SQL}`).bind(id, ...args),
+          c.env.DB.prepare(
+            `INSERT INTO expense_shares (expense_id, user_id, amount)
+             SELECT ?, key, value FROM json_each(?) WHERE ${UNCHANGED_SQL}`,
+          ).bind(id, JSON.stringify(after.shares), ...args),
+        ]
+      : []),
     c.env.DB.prepare(
       `INSERT INTO activity_log (id, group_id, actor_id, action, subject_id, data, created_at)
        SELECT ?, ?, ?, 'expense.edited', ?, ?, ? WHERE ${UNCHANGED_SQL}`,
@@ -196,7 +201,7 @@ expenseRoutes.post("/expenses/:expenseId", async (c) => {
        WHERE id = ? AND ${UNCHANGED_SQL} RETURNING id`,
     ).bind(e.description, e.amount, e.paidBy, e.date, e.splitMethod, at, me.id, id, ...args),
   ]);
-  if (!results[3]?.results.length) await whyNot(c.env, group.id, me.id, id, version, people, before);
+  if (!results.at(-1)?.results.length) await whyNot(c.env, group.id, me.id, id, version, people, before);
   return c.json({ expense: await expenseById(c.env, group.id, id) });
 });
 

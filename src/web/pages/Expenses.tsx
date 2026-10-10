@@ -1,6 +1,6 @@
 import { useLocation, useRoute } from "preact-iso";
 import { useEffect, useState } from "preact/hooks";
-import { type Balance, type Expense, type ExpensePage, netOf, splitEqual } from "../../shared/expenses";
+import { type Balance, type Expense, type ExpensePage, splitEqual } from "../../shared/expenses";
 import type { GroupDetail } from "../../shared/groups";
 import { amountInput, formatAmount, parseAmount } from "../../shared/money";
 import { ApiError, api } from "../api";
@@ -275,27 +275,37 @@ function ExpenseLoader({ id, expenseId, me }: { id: string; expenseId: string | 
   const groupPath = `/api/groups/${encodeURIComponent(id)}`;
   const expensePath = expenseId && `${groupPath}/expenses/${encodeURIComponent(expenseId)}`;
 
-  const load = (alive: () => boolean) => {
-    // The group first, so a failure to load the expense can still link back to it.
-    api<{ group: GroupDetail }>(groupPath)
-      .then(async (g) => {
-        if (!alive()) return;
-        setGroup(g.group);
-        if (expensePath) {
-          const e = await api<{ expense: Expense }>(expensePath);
-          if (alive()) setExpense(e.expense);
-        }
-      })
-      .catch((e) => alive() && setError(e));
-  };
+  // Each load starts the form over, from what is there now.
+  const [loads, setLoads] = useState(0);
 
   useEffect(() => {
     let alive = true;
-    load(() => alive);
+    // The group first, so a failure to load the expense can still link back to it.
+    api<{ group: GroupDetail }>(groupPath)
+      .then(async (g) => {
+        if (!alive) return;
+        setGroup(g.group);
+        if (expensePath) {
+          const e = await api<{ expense: Expense }>(expensePath);
+          if (alive) setExpense(e.expense);
+        }
+      })
+      .catch((e) => alive && setError(e));
     return () => {
       alive = false;
     };
   }, [groupPath, expensePath]);
+
+  // After someone else changed the expense or the group; failing, it leaves the form as it is.
+  const reload = async () => {
+    const [g, e] = await Promise.all([
+      api<{ group: GroupDetail }>(groupPath),
+      expensePath ? api<{ expense: Expense }>(expensePath) : null,
+    ]);
+    setGroup(g.group);
+    if (e) setExpense(e.expense);
+    setLoads((n) => n + 1);
+  };
 
   if (error !== null)
     return (
@@ -310,16 +320,7 @@ function ExpenseLoader({ id, expenseId, me }: { id: string; expenseId: string | 
         <Loading />
       </Page>
     );
-  return (
-    <ExpenseForm
-      // Loaded again (after someone else's change): the form starts over from what is there now.
-      key={expense && `${expense.id}@${expense.version}/${group.members.map((m) => m.id).join()}`}
-      group={group}
-      me={me}
-      expense={expense}
-      reload={expensePath ? () => load(() => true) : undefined}
-    />
-  );
+  return <ExpenseForm key={loads} group={group} me={me} expense={expense} reload={reload} />;
 }
 
 /** Someone in the form: a member, or someone already in the expense who has since left. */
@@ -343,7 +344,7 @@ function ExpenseForm({
   group: GroupDetail;
   me: User;
   expense: Expense | null;
-  reload?: () => void;
+  reload: () => Promise<void>;
 }) {
   const { lang, t } = useI18n();
   const errorText = useErrorText();
@@ -361,12 +362,9 @@ function ExpenseForm({
     for (const p of [{ userId: expense.paidBy, name: expense.paidByName }, ...expense.shares])
       if (!people.some((q) => q.id === p.userId))
         people.push({ id: p.userId, name: p.name, deactivated: false, left: true });
-  // Someone who has left and owes or is owed something in it: that can't change (the server turns
-  // it down), so only the description and date can.
-  const nets = expense
-    ? netOf({ ...expense, shares: Object.fromEntries(expense.shares.map((x) => [x.userId, x.amount])) })
-    : new Map<string, number>();
-  const fixedFor = people.filter((p) => p.left && (nets.get(p.id) ?? 0) !== 0);
+  // What someone who has left owes or is owed in it can't change (the server turns that down), so
+  // with them in it only the description and date can.
+  const fixedFor = people.filter((p) => p.left);
   const locked = fixedFor.length > 0;
   const [description, setDescription] = useState(expense?.description ?? "");
   const [amountText, setAmountText] = useState(expense ? amountInput(expense.amount, group.currency) : "");
@@ -420,7 +418,9 @@ function ExpenseForm({
   const label = (p: Person) => (p.id === me.id ? `${p.name} (${t("group.you")})` : p.name);
   // Someone else changed the expense, or someone in it has left the group meanwhile.
   const stale =
-    error instanceof ApiError && (error.code === "expense_changed" || error.code === "former_member_involved");
+    expense !== null &&
+    error instanceof ApiError &&
+    ["expense_changed", "former_member_involved", "not_in_group"].includes(error.code);
 
   return (
     <Page title={t(expense ? "expenseEdit.title" : "expenseNew.title")}>
@@ -499,8 +499,8 @@ function ExpenseForm({
         </fieldset>
         {error !== null && <ErrorMessage>{errorText(error)}</ErrorMessage>}
         <div class="actions">
-          {stale && reload ? (
-            <button type="button" class="button" onClick={reload}>
+          {stale ? (
+            <button type="button" class="button" disabled={busy} onClick={() => reload().catch(setError)}>
               {t("expenseEdit.reload")}
             </button>
           ) : (
