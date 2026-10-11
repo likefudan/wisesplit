@@ -1,6 +1,7 @@
 /** Notifications as the API shows them (GET /api/notifications; src/worker/notifications.ts). */
 
 import type { Currency } from "./currencies";
+import { type Lang, type MessageKey, translate } from "./i18n";
 import type { PaymentMethod } from "./settlements";
 
 /** Notifications per page of the list. */
@@ -36,7 +37,7 @@ export type NotificationData =
   // The reader was added to the group by someone in it.
   | { kind: "member.added"; data: null }
   // The admin approved the reader's sign-up, or turned it down. (Only approved users are told on
-  // the site, so a rejection is only ever sent by email, from PR 9.)
+  // the site, so a rejection is only ever sent by email.)
   | { kind: "signup.approved" | "signup.rejected"; data: null };
 
 export type NotificationKind = NotificationData["kind"];
@@ -67,4 +68,71 @@ export interface NotificationPage {
 export interface NotificationSettings {
   /** Notifications under the bell, on this site. */
   inApp: boolean;
+  /** The same notifications by email, to the user's Google address. */
+  email: boolean;
+}
+
+/** What a notification says in `lang`: its line, and a second one with the reader's share, if any. */
+export interface NotificationText {
+  text: string;
+  detail: string | null;
+}
+
+/**
+ * What `n` says to its reader in `lang`, for the list under the bell and for emails. `name` gives
+ * the name of a user id as the reader sees it ("you" for themselves), `money` an amount in the
+ * group's currency. Null for a kind this version has no words for.
+ */
+export function notificationText(
+  n: Pick<AppNotification, "kind" | "data" | "actorId">,
+  lang: Lang,
+  name: (id: string | null | undefined) => string,
+  money: (units: number | undefined) => string,
+): NotificationText | null {
+  const t = (key: MessageKey, params?: Record<string, string>) => translate(lang, key, params);
+  const actor = name(n.actorId);
+  const note = n as NotificationData;
+  switch (note.kind) {
+    case "expense.added":
+      return {
+        // Said only when someone other than whoever added it paid.
+        text: t(note.data.paidBy === n.actorId ? "notify.expense.added" : "notify.expense.addedPaidBy", {
+          actor,
+          description: note.data.description,
+          amount: money(note.data.amount),
+          payer: name(note.data.paidBy),
+        }),
+        detail: note.data.share === undefined ? null : t("notify.share", { share: money(note.data.share) }),
+      };
+    case "expense.edited":
+      return {
+        text: t("notify.expense.edited", { actor, description: note.data.description }),
+        detail:
+          note.data.shareBefore === note.data.shareAfter
+            ? null
+            : t("notify.shareChange", { before: money(note.data.shareBefore), after: money(note.data.shareAfter) }),
+      };
+    case "expense.deleted":
+      return {
+        text: t("notify.expense.deleted", {
+          actor,
+          description: note.data.description,
+          amount: money(note.data.amount),
+        }),
+        detail: null,
+      };
+    case "payment.requested":
+    case "payment.confirmed":
+    case "payment.declined":
+    case "payment.withdrawn":
+      return { text: t(`notify.${note.kind}`, { actor, amount: money(note.data.amount) }), detail: null };
+    case "member.added":
+      return { text: t("notify.member.added", { actor }), detail: null };
+    case "signup.approved":
+    case "signup.rejected":
+      return { text: t(`notify.${note.kind}`), detail: null };
+    default:
+      // Something a newer version of the site sends.
+      return null;
+  }
 }

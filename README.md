@@ -73,8 +73,9 @@ curl -i -X POST http://localhost:8787/api/test/login -H 'Origin: http://localhos
 
 ### Notifications
 
-- `notify` in `src/worker/notifications.ts` is the one place that tells people about things: a route that did something passes it the event (an expense added, edited or deleted; a payment recorded, confirmed, declined or withdrawn; someone added to a group; a sign-up approved or rejected), and it works out who to tell (everyone the expense or payment involves, never whoever did it) and what each of them reads (their own share of an expense, before and after an edit). Email and push will go out from there too.
-- For now that means a `notifications` row per person, shown under the bell in the header (`/notifications`), which asks for the unread count every minute while the page is in view. Only approved users who are still in the group are told, and not those who turned notifications off on the settings page (`notification_prefs`). A failure is logged and never undoes or blocks what was done.
+- `notify` in `src/worker/notifications.ts` is the one place that tells people about things: a route that did something passes it the event (an expense added, edited or deleted; a payment recorded, confirmed, declined or withdrawn; someone added to a group; a sign-up approved or rejected), and it works out who to tell (everyone the expense or payment involves, never whoever did it) and what each of them reads (their own share of an expense, before and after an edit; `notificationText` in `src/shared/notifications.ts` words it for both the bell and email). Push will go out from there too.
+- Under the bell: a `notifications` row per person, shown in the header (`/notifications`), which asks for the unread count every minute while the page is in view. Only approved users who are still in the group are told, and not those who turned notifications off on the settings page (`notification_prefs`). A failure is logged and never undoes or blocks what was done.
+- By email: the same people get the same notification by email through [Resend](https://resend.com) (`src/worker/email.ts`), in the language of their profile, with a link to the group and to the settings page, unless they turned email off there. A rejected applicant, who can't see the bell, is told only by email. Emails are sent after the response (`waitUntil`), all of an event's in one Resend request (its free tier allows a couple of requests a second and 100 emails a day); a refusal or failure is only logged. Nothing is sent without `RESEND_API_KEY` and `EMAIL_FROM`, nor to reserved domains such as `example.com` (the test logins). Emails from the test site say so in the subject.
 - Notifications go with their group when it is deleted, and after 180 days in the same daily cron run (`cleanUpNotifications`).
 
 ### Languages
@@ -107,7 +108,9 @@ For sign-in (each deploy copies these onto the Worker as secrets; one left unset
 | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | A Cloudflare Turnstile widget (dashboard → Turnstile → Add widget, mode *Managed*) with hostnames `wisesplit.llmat.dev` and `staging.wisesplit.llmat.dev`. Without them the sites refuse sign-ups. |
 | `ADMIN_EMAILS` | The admin's Google email (comma-separate several). |
 | `TEST_LOGIN_SECRET_STAGING` | Optional: any long random string, to use the test login on staging. Never sent to production. |
+| `RESEND_API_KEY` | A [Resend](https://resend.com) API key (*Sending access* is enough) for notification emails. Without it (or `EMAIL_FROM`) no email is sent. The jaysbadminton key can be reused. |
+| `EMAIL_FROM` | The sender, e.g. `wisesplit <notify@llmat.dev>`, on a domain verified in Resend. |
 
 The same Cloudflare token jaysbadminton uses works if it already has those permissions. The `staging.wisesplit.llmat.dev` and `wisesplit.llmat.dev` DNS records and certificates are created by `wrangler deploy` (custom domains); nothing needs to be added by hand.
 
-Later PRs add more secrets (Resend, Web Push keys); each lists what it needs.
+Later PRs add more secrets (Web Push keys); each lists what it needs.

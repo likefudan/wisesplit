@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { formatAmount } from "../../shared/money";
-import type { AppNotification, NotificationPage, NotificationSettings } from "../../shared/notifications";
+import {
+  type AppNotification,
+  type NotificationPage,
+  type NotificationSettings,
+  notificationText,
+} from "../../shared/notifications";
 import { api } from "../api";
 import { ErrorMessage, Loading, Page, useErrorText } from "../components";
 import { formatDate } from "../format";
@@ -154,47 +159,10 @@ function NotificationRow({
     id === me.id ? t("notifications.you") : (id && names[id]) || t("activity.someone");
   const money = (units: number | undefined) =>
     units === undefined ? "—" : n.group ? formatAmount(units, n.group.currency, lang) : String(units);
-  const actor = name(n.actorId);
-  let text: string;
-  let detail: string | null = null;
-  switch (n.kind) {
-    case "expense.added":
-      // Said only when someone other than whoever added it paid.
-      text = t(n.data.paidBy === n.actorId ? "notify.expense.added" : "notify.expense.addedPaidBy", {
-        actor,
-        description: n.data.description,
-        amount: money(n.data.amount),
-        payer: name(n.data.paidBy),
-      });
-      if (n.data.share !== undefined) detail = t("notify.share", { share: money(n.data.share) });
-      break;
-    case "expense.edited":
-      text = t("notify.expense.edited", { actor, description: n.data.description });
-      if (n.data.shareBefore !== n.data.shareAfter)
-        detail = t("notify.shareChange", { before: money(n.data.shareBefore), after: money(n.data.shareAfter) });
-      break;
-    case "expense.deleted":
-      text = t("notify.expense.deleted", { actor, description: n.data.description, amount: money(n.data.amount) });
-      break;
-    case "payment.requested":
-    case "payment.confirmed":
-    case "payment.declined":
-    case "payment.withdrawn":
-      text = t(`notify.${n.kind}`, { actor, amount: money(n.data.amount) });
-      break;
-    case "member.added":
-      text = t("notify.member.added", { actor });
-      break;
-    case "signup.approved":
-      text = t("notify.signup.approved");
-      break;
-    case "signup.rejected":
-      // Never under the bell: only approved users can see it.
-      return null;
-    default:
-      // Something a newer version of the site sends: this page has no words for it.
-      return null;
-  }
+  // A sign-up rejection is never under the bell: only approved users can see it.
+  const said = n.kind === "signup.rejected" ? null : notificationText(n, lang, name, money);
+  if (!said) return null;
+  const { text, detail } = said;
   const href = n.group ? `/groups/${encodeURIComponent(n.group.id)}` : "/";
   return (
     <a class={n.read ? "notification" : "notification unread"} href={href} onClick={onOpen}>
@@ -210,11 +178,11 @@ function NotificationRow({
 }
 
 export function NotificationSettingsPage() {
-  return <RequireUser>{() => <SettingsForm />}</RequireUser>;
+  return <RequireUser>{(me) => <SettingsForm me={me} />}</RequireUser>;
 }
 
-/** How to hear about things. Only notifications on the site for now; email and push come later. */
-function SettingsForm() {
+/** How to hear about things: on the site, and by email. */
+function SettingsForm({ me }: { me: User }) {
   const { t } = useI18n();
   const errorText = useErrorText();
   const [settings, setSettings] = useState<NotificationSettings | null>(null);
@@ -275,6 +243,16 @@ function SettingsForm() {
             <span>{t("notifySettings.inApp")}</span>
           </label>
           <small class="muted">{t("notifySettings.inAppHint")}</small>
+          <label class="field checkbox">
+            <input
+              type="checkbox"
+              checked={settings.email}
+              disabled={busy}
+              onChange={(e) => save({ email: e.currentTarget.checked })}
+            />
+            <span>{t("notifySettings.email")}</span>
+          </label>
+          <small class="muted">{t("notifySettings.emailHint", { email: me.email })}</small>
           {message &&
             (message.ok ? (
               <p class="success" role="status">
