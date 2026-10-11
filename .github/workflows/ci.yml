@@ -100,6 +100,8 @@ jobs:
           TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
           ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
           TEST_LOGIN_SECRET: ${{ secrets.TEST_LOGIN_SECRET_STAGING }}
+      - name: Web Push key for the test site (made once)
+        run: node scripts/ensure-vapid.mjs staging
       - name: Smoke test the test site
         run: node scripts/smoke.mjs
         env:
@@ -151,5 +153,7 @@ jobs:
           TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
           TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
           ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
+      - name: Web Push key for the live site (made once)
+        run: node scripts/ensure-vapid.mjs production
       - name: Smoke test the live site
         run: node scripts/smoke.mjs

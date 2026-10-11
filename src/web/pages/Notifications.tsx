@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import { formatAmount } from "../../shared/money";
-import type { AppNotification, NotificationPage, NotificationSettings } from "../../shared/notifications";
+import {
+  type AppNotification,
+  type NotificationPage,
+  type NotificationSettings,
+  notificationText,
+} from "../../shared/notifications";
 import { api } from "../api";
 import { ErrorMessage, Loading, Page, useErrorText } from "../components";
 import { formatDate } from "../format";
 import { useI18n } from "../i18n";
 import { setUnread } from "../notifications";
+import { checkPush, PushDenied, pushSupport, testPush, turnOffPush, turnOnPush } from "../push";
 import { RequireUser } from "../RequireUser";
 import type { User } from "../session";
 
@@ -152,49 +157,10 @@ function NotificationRow({
   const { lang, t } = useI18n();
   const name = (id: string | null | undefined) =>
     id === me.id ? t("notifications.you") : (id && names[id]) || t("activity.someone");
-  const money = (units: number | undefined) =>
-    units === undefined ? "—" : n.group ? formatAmount(units, n.group.currency, lang) : String(units);
-  const actor = name(n.actorId);
-  let text: string;
-  let detail: string | null = null;
-  switch (n.kind) {
-    case "expense.added":
-      // Said only when someone other than whoever added it paid.
-      text = t(n.data.paidBy === n.actorId ? "notify.expense.added" : "notify.expense.addedPaidBy", {
-        actor,
-        description: n.data.description,
-        amount: money(n.data.amount),
-        payer: name(n.data.paidBy),
-      });
-      if (n.data.share !== undefined) detail = t("notify.share", { share: money(n.data.share) });
-      break;
-    case "expense.edited":
-      text = t("notify.expense.edited", { actor, description: n.data.description });
-      if (n.data.shareBefore !== n.data.shareAfter)
-        detail = t("notify.shareChange", { before: money(n.data.shareBefore), after: money(n.data.shareAfter) });
-      break;
-    case "expense.deleted":
-      text = t("notify.expense.deleted", { actor, description: n.data.description, amount: money(n.data.amount) });
-      break;
-    case "payment.requested":
-    case "payment.confirmed":
-    case "payment.declined":
-    case "payment.withdrawn":
-      text = t(`notify.${n.kind}`, { actor, amount: money(n.data.amount) });
-      break;
-    case "member.added":
-      text = t("notify.member.added", { actor });
-      break;
-    case "signup.approved":
-      text = t("notify.signup.approved");
-      break;
-    case "signup.rejected":
-      // Never under the bell: only approved users can see it.
-      return null;
-    default:
-      // Something a newer version of the site sends: this page has no words for it.
-      return null;
-  }
+  const said = notificationText(n, lang, name);
+  // A rejection never shows here (only approved users see the bell), nor anything newer than this page.
+  if (!said) return null;
+  const { text, detail } = said;
   const href = n.group ? `/groups/${encodeURIComponent(n.group.id)}` : "/";
   return (
     <a class={n.read ? "notification" : "notification unread"} href={href} onClick={onOpen}>
@@ -213,7 +179,7 @@ export function NotificationSettingsPage() {
   return <RequireUser>{() => <SettingsForm />}</RequireUser>;
 }
 
-/** How to hear about things. Only notifications on the site for now; email and push come later. */
+/** How to hear about things: on the site, and by push in this browser. */
 function SettingsForm() {
   const { t } = useI18n();
   const errorText = useErrorText();
@@ -275,6 +241,7 @@ function SettingsForm() {
             <span>{t("notifySettings.inApp")}</span>
           </label>
           <small class="muted">{t("notifySettings.inAppHint")}</small>
+          <PushSetting />
           {message &&
             (message.ok ? (
               <p class="success" role="status">
@@ -286,5 +253,108 @@ function SettingsForm() {
         </div>
       )}
     </Page>
+  );
+}
+
+/**
+ * Push in this browser: a switch, or why there is none (not set up, not supported, or on an
+ * iPhone outside the Home Screen). On and off are per browser, so this reads the browser itself.
+ */
+function PushSetting() {
+  const { t } = useI18n();
+  const errorText = useErrorText();
+  const support = pushSupport();
+  // undefined while loading; null when the site has no key (push not set up).
+  const [publicKey, setPublicKey] = useState<string | null | undefined>(undefined);
+  const [on, setOn] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<
+    { kind: "denied" | "testSent" | "testFailed" } | { kind: "error"; error: unknown } | null
+  >(null);
+
+  useEffect(() => {
+    if (support !== "ok") return;
+    let alive = true;
+    api<{ publicKey: string | null }>("/api/push")
+      .then(async ({ publicKey }) => {
+        const enabled = publicKey ? await checkPush(publicKey) : false;
+        if (!alive) return;
+        setPublicKey(publicKey);
+        setOn(enabled);
+      })
+      .catch((error) => {
+        if (!alive) return;
+        setPublicKey(null);
+        setMessage({ kind: "error", error });
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  async function flip(next: boolean) {
+    if (!publicKey) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      if (next) await turnOnPush(publicKey);
+      else await turnOffPush();
+      setOn(next);
+    } catch (error) {
+      setMessage(error instanceof PushDenied ? { kind: "denied" } : { kind: "error", error });
+      // Off in the browser after a failed "off" (it unsubscribes first), and after a failed "on".
+      setOn(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function test() {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await testPush();
+      if (result === "gone") setOn(false);
+      setMessage({ kind: result === "sent" ? "testSent" : "testFailed" });
+    } catch (error) {
+      setMessage({ kind: "error", error });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (support !== "ok")
+    return (
+      <p class="muted">{t(support === "ios-install" ? "notifySettings.pushIos" : "notifySettings.pushUnsupported")}</p>
+    );
+  if (publicKey === undefined) return <Loading />;
+  if (publicKey === null && message === null) return <p class="muted">{t("notifySettings.pushNotConfigured")}</p>;
+  return (
+    <>
+      {publicKey && (
+        <>
+          <label class="field checkbox">
+            <input type="checkbox" checked={on} disabled={busy} onChange={(e) => flip(e.currentTarget.checked)} />
+            <span>{t("notifySettings.push")}</span>
+          </label>
+          <small class="muted">{t("notifySettings.pushHint")}</small>
+          {on && (
+            <div class="actions">
+              <button type="button" class="button secondary small" disabled={busy} onClick={test}>
+                {t("notifySettings.pushTest")}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+      {message?.kind === "denied" && <ErrorMessage>{t("notifySettings.pushDenied")}</ErrorMessage>}
+      {message?.kind === "testSent" && (
+        <p class="success" role="status">
+          {t("notifySettings.pushTestSent")}
+        </p>
+      )}
+      {message?.kind === "testFailed" && <ErrorMessage>{t("notifySettings.pushTestFailed")}</ErrorMessage>}
+      {message?.kind === "error" && <ErrorMessage>{errorText(message.error)}</ErrorMessage>}
+    </>
   );
 }

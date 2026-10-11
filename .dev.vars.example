@@ -18,3 +18,8 @@ TEST_LOGIN_SECRET="local-secret"
 # Optional: Turnstile. Cloudflare's always-passing test keys work locally:
 # TURNSTILE_SITE_KEY="1x00000000000000000000AA"
 # TURNSTILE_SECRET_KEY="1x0000000000000000000000000000000AA"
+
+# Optional: Web Push (CI makes the staging and production keys). Make a local key with
+#   node -e 'crypto.subtle.generateKey({name:"ECDSA",namedCurve:"P-256"},true,["sign"]).then(k=>crypto.subtle.exportKey("jwk",k.privateKey)).then(({kty,crv,x,y,d})=>console.log(JSON.stringify({kty,crv,x,y,d})))'
+# and paste what it prints between the single quotes:
+# VAPID_KEY='{"kty":"EC","crv":"P-256",...}'

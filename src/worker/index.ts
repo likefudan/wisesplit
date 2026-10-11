@@ -10,6 +10,7 @@ import { groupRoutes } from "./routes/groups";
 import { inviteRoutes } from "./routes/invites";
 import { meRoutes } from "./routes/me";
 import { notificationRoutes } from "./routes/notifications";
+import { pushRoutes } from "./routes/push";
 import { testLoginRoutes } from "./routes/testLogin";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -39,6 +40,7 @@ app.route("/api/admin", adminRoutes);
 app.route("/api/groups", groupRoutes);
 app.route("/api/invites", inviteRoutes);
 app.route("/api/notifications", notificationRoutes);
+app.route("/api/push", pushRoutes);
 app.route("/api/test", testLoginRoutes);
 
 // Proves the Worker is up and can reach its database.
@@ -67,6 +69,33 @@ app.post("/api/csp-report", async (c) => {
   }
   console.warn("csp report:", new TextDecoder().decode(bytes.subarray(0, n)));
   return c.body(null, 204);
+});
+
+// What a phone or computer needs to put the site on its Home Screen or install it as an app. The
+// test site's is named and coloured as such, so the two never look alike side by side.
+app.get("/manifest.webmanifest", (c) => {
+  const staging = isStaging(c.env);
+  const icons = staging ? "/icons/staging-" : "/icons/";
+  c.header("Content-Type", "application/manifest+json");
+  c.header("Cache-Control", "public, max-age=3600");
+  return c.body(
+    JSON.stringify({
+      name: staging ? "wisesplit (test)" : "wisesplit",
+      short_name: staging ? "wisesplit test" : "wisesplit",
+      description: "Split expenses with friends. 和朋友一起记账分账。",
+      id: "/",
+      start_url: "/",
+      scope: "/",
+      display: "standalone",
+      background_color: "#f8fafc",
+      theme_color: staging ? "#d97706" : "#0f766e",
+      icons: [
+        { src: `${icons}icon-192.png`, sizes: "192x192", type: "image/png" },
+        { src: `${icons}icon-512.png`, sizes: "512x512", type: "image/png" },
+        { src: `${icons}maskable-512.png`, sizes: "512x512", type: "image/png", purpose: "maskable" },
+      ],
+    }),
+  );
 });
 
 // Search engines may index the real site, never the test site.

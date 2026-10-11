@@ -16,6 +16,11 @@ export interface Env {
   /** Comma-separated Google emails of the site admins (secret, so the address stays out of the repo). */
   ADMIN_EMAILS?: string;
   /**
+   * This site's VAPID key for Web Push (secret): a P-256 private key as JWK. CI makes one for each
+   * environment on its first deploy (scripts/ensure-vapid.mjs). Without it push is off.
+   */
+  VAPID_KEY?: string;
+  /**
    * Turns on POST /api/test/login, which signs in as any Google identity without Google, for the
    * browser tests. Ignored unless ENVIRONMENT is "local" or "staging"; never works in production.
    */

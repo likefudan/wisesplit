@@ -73,9 +73,16 @@ curl -i -X POST http://localhost:8787/api/test/login -H 'Origin: http://localhos
 
 ### Notifications
 
-- `notify` in `src/worker/notifications.ts` is the one place that tells people about things: a route that did something passes it the event (an expense added, edited or deleted; a payment recorded, confirmed, declined or withdrawn; someone added to a group; a sign-up approved or rejected), and it works out who to tell (everyone the expense or payment involves, never whoever did it) and what each of them reads (their own share of an expense, before and after an edit). Email and push will go out from there too.
+- `notify` in `src/worker/notifications.ts` is the one place that tells people about things: a route that did something passes it the event (an expense added, edited or deleted; a payment recorded, confirmed, declined or withdrawn; someone added to a group; a sign-up approved or rejected), and it works out who to tell (everyone the expense or payment involves, never whoever did it) and what each of them reads (their own share of an expense, before and after an edit). Push messages go out from there too (below); email will.
 - For now that means a `notifications` row per person, shown under the bell in the header (`/notifications`), which asks for the unread count every minute while the page is in view. Only approved users who are still in the group are told, and not those who turned notifications off on the settings page (`notification_prefs`). A failure is logged and never undoes or blocks what was done.
 - Notifications go with their group when it is deleted, and after 180 days in the same daily cron run (`cleanUpNotifications`).
+
+### Installing the site, and push notifications
+
+- The site can be added to a phone's Home Screen or installed as an app: `/manifest.webmanifest` (served by the Worker, so the test site's is named and coloured as such), the icons in `src/web/public/icons/`, and a service worker (`src/web/public/sw.js`) that shows push notifications and caches nothing.
+- Push is turned on and off per browser on the notification settings page; each browser that turns it on leaves a `push_subscriptions` row (10 per person at most). On an iPhone or iPad, Apple only allows push for a site opened from the Home Screen (iOS 16.4 or later), so the page says how to add it there instead. Signing out turns push off in that browser.
+- `notify` sends every browser of everyone it tells (still approved and in the group; the site's own notification switch doesn't matter) the same line the bell shows, in that person's language, after answering the request (`pushNotes` in `src/worker/push.ts`). Messages are encrypted for each browser (RFC 8291) and signed with the site's VAPID key (RFC 8292) with Web Crypto, and go straight to each browser maker's push service; only those services' addresses are accepted as subscriptions. One the push service says is gone is removed; any other failure is logged and never blocks what was done.
+- The VAPID key is the Worker secret `VAPID_KEY` (a P-256 private key as JWK). Each deploy gives a Worker one if it has none (`scripts/ensure-vapid.mjs`), so each environment has its own and nothing needs setting up. Replacing it (`npx wrangler secret delete VAPID_KEY [--env staging]`, then deploy) makes every browser subscribe again: the settings page does that by itself the next time it is opened in that browser. Locally, push is off unless `.dev.vars` has a `VAPID_KEY`.
 
 ### Languages
 
@@ -110,4 +117,4 @@ For sign-in (each deploy copies these onto the Worker as secrets; one left unset
 
 The same Cloudflare token jaysbadminton uses works if it already has those permissions. The `staging.wisesplit.llmat.dev` and `wisesplit.llmat.dev` DNS records and certificates are created by `wrangler deploy` (custom domains); nothing needs to be added by hand.
 
-Later PRs add more secrets (Resend, Web Push keys); each lists what it needs.
+The Web Push key needs nothing from you: the first deploy to each environment makes one (see above). Later PRs add more secrets (Resend); each lists what it needs.

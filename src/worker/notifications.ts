@@ -1,3 +1,4 @@
+import { waitUntil } from "cloudflare:workers";
 import type { ExpenseSnapshot } from "../shared/activity";
 import type { Currency } from "../shared/currencies";
 import {
@@ -11,6 +12,7 @@ import {
 import type { Env } from "./env";
 import { HttpError, now } from "./http";
 import { randomId } from "./lib/crypto";
+import { pushNotes } from "./push";
 
 /**
  * Something that happened that people should hear about, as the route that did it describes it.
@@ -81,9 +83,11 @@ function notesFor(event: NotifyEvent): Note[] {
 
 /**
  * Tells everyone `event` concerns, apart from whoever did it: under the bell, for those who can
- * see it there (approved, still in the group, and with in-app notifications on). A notification is
+ * see it there (approved, still in the group, and with in-app notifications on), and by push to
+ * every browser they turned push on in (src/worker/push.ts). A notification is
  * a side effect of something already done, so a failure here is logged and never undoes or blocks
- * it. Email and push (PR 9 and 10) go out from here too.
+ * it. Push messages go out after the answer (`waitUntil`), so a slow push service never holds it
+ * up. Email (PR 9) goes out from here too.
  */
 export async function notify(env: Env, event: NotifyEvent): Promise<void> {
   try {
@@ -91,6 +95,7 @@ export async function notify(env: Env, event: NotifyEvent): Promise<void> {
     if (!notes.length) return;
     const groupId = "groupId" in event ? event.groupId : null;
     const subjectId = "expenseId" in event ? event.expenseId : "paymentId" in event ? event.paymentId : null;
+    waitUntil(pushNotes(env, { actorId: event.actorId, groupId, subjectId }, notes));
     const at = now();
     // Each recipient is checked in the statement that tells them, so someone who has just left the
     // group, been deactivated or turned notifications off isn't told.

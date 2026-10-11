@@ -1,4 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
+import { forgetPushHere } from "./push";
 import type { Lang } from "../shared/i18n";
 import type { PublicUser } from "../shared/users";
 import { ApiError, api } from "./api";
@@ -107,6 +108,7 @@ export function chooseLang(next: Lang) {
 
 /** Signs out and goes to the front page (which still shows the account if the server could not be reached). */
 export async function signOut(): Promise<void> {
+  await forgetPushHere();
   try {
     await api("/api/auth/logout", {});
   } catch {
