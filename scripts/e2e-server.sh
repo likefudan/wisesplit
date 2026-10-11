@@ -5,6 +5,9 @@ set -e
 cd "$(dirname "$0")/.."
 rm -rf .wrangler/e2e
 npx wrangler d1 migrations apply DB --local --persist-to .wrangler/e2e > /dev/null
+# The tests sign up more people in one run than the default daily cap (20) lets in.
+npx wrangler d1 execute DB --local --persist-to .wrangler/e2e \
+  --command "INSERT INTO settings (key, value) VALUES ('daily_signup_cap', '1000')" > /dev/null
 # A local site with the test login on and one admin the tests sign in as, and without Google or
 # Turnstile. Every setting is given here, so a developer's .dev.vars (which wrangler would load
 # otherwise) changes nothing.

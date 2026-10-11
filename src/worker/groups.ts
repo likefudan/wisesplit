@@ -49,12 +49,13 @@ export const isMember = async (env: Env, groupId: string, userId: string) =>
 
 /**
  * SQL for every amount that moves someone's balance in group ?, one row each (user_id, net):
- * what they paid for an expense, less their share of each, plus the confirmed payments they made,
- * less those they received. Binds the group id four times.
+ * what they paid for an expense, less their share of each (deleted expenses count for nothing),
+ * plus the confirmed payments they made, less those they received. Binds the group id four times.
  */
-export const LEDGER_SQL = `SELECT paid_by AS user_id, amount AS net FROM expenses WHERE group_id = ?
+export const LEDGER_SQL = `SELECT paid_by AS user_id, amount AS net FROM expenses WHERE group_id = ? AND deleted_at IS NULL
     UNION ALL
-    SELECT s.user_id, -s.amount FROM expense_shares s JOIN expenses e ON e.id = s.expense_id WHERE e.group_id = ?
+    SELECT s.user_id, -s.amount FROM expense_shares s JOIN expenses e ON e.id = s.expense_id
+      WHERE e.group_id = ? AND e.deleted_at IS NULL
     UNION ALL
     SELECT from_user, amount FROM settlements WHERE group_id = ? AND status = 'confirmed'
     UNION ALL
@@ -73,13 +74,13 @@ export const unsettledArgs = (groupId: string) => [...ledgerArgs(groupId), group
  * SQL that is true while user ? may not leave group ? (or be removed from it). The rule
  * (docs/mvp-scope.md §2): someone with any expense involving them, paid by them or shared by
  * them, or any payment made or received that counts or may yet count, may go only once the whole
- * group is settled; someone with none may go any time. Written as SQL so the check and the
+ * group is settled; someone with none (or only deleted expenses) may go any time. Written as SQL so the check and the
  * removal are one statement, and an expense or payment added at the same moment can't slip in
  * between.
  */
-export const MAY_NOT_LEAVE_SQL = `((EXISTS (SELECT 1 FROM expenses WHERE group_id = ? AND paid_by = ?)
+export const MAY_NOT_LEAVE_SQL = `((EXISTS (SELECT 1 FROM expenses WHERE group_id = ? AND paid_by = ? AND deleted_at IS NULL)
     OR EXISTS (SELECT 1 FROM expense_shares s JOIN expenses e ON e.id = s.expense_id
-      WHERE e.group_id = ? AND s.user_id = ?)
+      WHERE e.group_id = ? AND s.user_id = ? AND e.deleted_at IS NULL)
     OR EXISTS (SELECT 1 FROM settlements WHERE group_id = ? AND ? IN (from_user, to_user)
       AND status IN ('pending', 'confirmed')))
   AND ${UNSETTLED_SQL})`;

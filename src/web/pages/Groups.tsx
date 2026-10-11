@@ -7,6 +7,7 @@ import { Avatar, ErrorMessage, Loading, Page, useErrorText } from "../components
 import { currencyLabel, formatDate } from "../format";
 import { useI18n } from "../i18n";
 import { RequireUser } from "../RequireUser";
+import { ActivityList } from "./Activity";
 import { Balances, ExpenseList } from "./Expenses";
 import { Payments } from "./Payments";
 import type { User } from "../session";
@@ -137,8 +138,9 @@ function GroupView({ id, me }: { id: string; me: User }) {
   // Removing a member, leaving or deleting: what failed, shown next to the member list.
   const [actionError, setActionError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
-  // Goes up when a payment is confirmed, declined or withdrawn: balances and payments reload.
-  const [version, setVersion] = useState(0);
+  // Counts the expenses deleted (or found changed) and the payments confirmed, declined or
+  // withdrawn on this page.
+  const [changes, setChanges] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -165,6 +167,9 @@ function GroupView({ id, me }: { id: string; me: User }) {
     );
 
   const isOwner = group.ownerId === me.id;
+  // Who is in the group and how many expenses or payments changed here: when either changes, the
+  // balances, payments and activity are loaded again.
+  const refresh = `${group.members.map((m) => m.id).join()}/${changes}`;
   const path = `/api/groups/${encodeURIComponent(group.id)}`;
 
   async function act(confirmText: string, run: () => Promise<void>) {
@@ -209,10 +214,9 @@ function GroupView({ id, me }: { id: string; me: User }) {
     <Page title={group.name}>
       <p class="muted">{t("group.currency", { currency: currencyLabel(group.currency, lang) })}</p>
 
-      {/* Someone added or removed changes who is listed. */}
-      <Balances key={group.members.map((m) => m.id).join()} group={group} me={me} version={version} />
-      <Payments group={group} me={me} version={version} onChange={() => setVersion((n) => n + 1)} />
-      <ExpenseList group={group} me={me} />
+      <Balances key={refresh} group={group} me={me} />
+      <Payments group={group} me={me} refresh={refresh} onChange={() => setChanges((n) => n + 1)} />
+      <ExpenseList group={group} me={me} onChange={() => setChanges((n) => n + 1)} />
 
       <section>
         <h2>
@@ -253,6 +257,8 @@ function GroupView({ id, me }: { id: string; me: User }) {
 
       <AddMember path={path} onAdded={setGroup} onError={lost} />
       <InviteLink path={path} onError={lost} />
+
+      <ActivityList group={group} refresh={refresh} />
 
       <section>
         {isOwner ? (

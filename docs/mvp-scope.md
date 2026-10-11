@@ -36,7 +36,7 @@ Split methods:
 - **Percentages** (must add up to 100%)
 - **Shares** (e.g. one person counts as 2 shares)
 - **Equal with adjustments**: some people pay a fixed amount more or less than the others, and everyone else splits the remainder equally.
-  Example: 100 split among 4, Wang +10 → the other three pay 30 each, Wang pays 40.
+  Example: 100 split among 4, Wang +10 → the other three pay 22.50 each, Wang pays 32.50.
 
 Amounts are stored as integers in the currency's smallest unit (cents for USD, yen for JPY). Rounding remainders are assigned by a fixed rule so the shares always add up to the total.
 Any group member can edit or delete any expense; every change goes into the group's activity log (who, when, what changed).

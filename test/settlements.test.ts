@@ -206,6 +206,41 @@ describe("settling up", () => {
   });
 });
 
+describe("settling up with deleted expenses", () => {
+  it("leaves deleted expenses out of balances, suggestions and the settled check", async () => {
+    const { id, people } = await makeGroup(["Ann", "Bob"]);
+    const [ann, bob] = people as [Person, Person];
+    const kept = await addExpense(id, ann, 1000, [ann, bob]);
+    expect(kept.status).toBe(200);
+    const gone = (await json(await addExpense(id, ann, 4000, [ann, bob]))).expense;
+    expect(
+      (await post(`/api/groups/${id}/expenses/${gone.id}/delete`, ann.cookie, { version: gone.version })).status,
+    ).toBe(204);
+    expect((await balancesOf(id, bob)).suggestions).toEqual([[bob.id, ann.id, 500]]);
+    const p = (await json(await pay(id, bob, bob, ann, 500))).payment;
+    expect((await decide(id, ann, p.id, "confirm")).status).toBe(200);
+    expect((await balancesOf(id, bob)).nets).toEqual({ [ann.id]: 0, [bob.id]: 0 });
+    expect((await post(`/api/groups/${id}/leave`, bob.cookie)).status).toBe(204);
+  });
+});
+
+describe("the activity log", () => {
+  it("lists payments with the names of both sides", async () => {
+    const { id, people } = await makeGroup(["Ann", "Bob"]);
+    const [ann, bob] = people as [Person, Person];
+    const p = (await json(await pay(id, bob, bob, ann, 250))).payment;
+    await decide(id, ann, p.id, "decline");
+    const page = await json(await send(`/api/groups/${id}/activity`, { cookie: ann.cookie }));
+    const mine = page.entries.filter((e: any) => e.action.startsWith("settlement."));
+    expect(mine.map((e: any) => [e.action, e.actorId, e.subjectId])).toEqual([
+      ["settlement.declined", ann.id, p.id],
+      ["settlement.added", bob.id, p.id],
+    ]);
+    expect(mine[0].data).toEqual({ from: bob.id, to: ann.id, amount: 250, method: "other" });
+    expect(page.names).toMatchObject({ [ann.id]: "Ann", [bob.id]: "Bob" });
+  });
+});
+
 describe("payments with a deactivated member", () => {
   it("count at once when paid to them, and the payee records what a deactivated member paid", async () => {
     const { id, people } = await makeGroup(["Ann", "Bob", "Cat"]);

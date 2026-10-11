@@ -73,13 +73,13 @@ export function Suggestions({ group, me, suggestions }: { group: GroupDetail; me
 export function Payments({
   group,
   me,
-  version,
+  refresh,
   onChange,
 }: {
   group: GroupDetail;
   me: User;
-  /** Goes up after each confirm, decline or withdraw here (onChange): the list reloads. */
-  version: number;
+  /** Changes after each confirm, decline or withdraw here (onChange), among others: the list reloads. */
+  refresh: string;
   /** A payment was confirmed, declined or withdrawn. */
   onChange: () => void;
 }) {
@@ -106,7 +106,7 @@ export function Payments({
     return () => {
       alive = false;
     };
-  }, [path, version, reload]);
+  }, [path, refresh, reload]);
 
   async function decide(p: Payment, action: "confirm" | "decline" | "withdraw") {
     if (action === "decline" && !confirm(t("payment.confirm.decline", { name: p.fromName }))) return;

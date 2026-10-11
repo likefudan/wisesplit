@@ -54,16 +54,16 @@ curl -i -X POST http://localhost:8787/api/test/login -H 'Origin: http://localhos
 ### Expenses and balances
 
 - Any member adds an expense (`src/worker/routes/expenses.ts`): description, amount, one payer and the members sharing it, all of whom must be in the group, and a day (YYYY-MM-DD, not a time).
-- Money is always a whole number of the currency's smallest unit (cents, yen); `src/shared/money.ts` reads what people type and formats it back. Each person's share is stored (`expense_shares`) and the shares add up to the amount: `spread` in `src/shared/expenses.ts` hands out the leftover units by a fixed rule (largest remainder, then smallest user id), so an equal split gives the first few by id one cent more. Only the equal split exists so far; the table already accepts the others, and stores what was entered for them (`split_params`).
-- A balance is what someone paid minus their shares, plus confirmed payments made minus those received, worked out each time (`LEDGER_SQL` in `src/worker/groups.ts`; no stored totals to go stale).
+- Money is always a whole number of the currency's smallest unit (cents, yen); `src/shared/money.ts` reads what people type and formats it back. Each person's share is stored (`expense_shares`) and the shares add up to the amount: `spread` in `src/shared/expenses.ts` hands out the leftover units by a fixed rule (largest remainder, then smallest user id), so an equal split gives the first few by id one cent more. `splitShares` there works out every split method (equal, exact, percent, shares, equal with adjustments) for both the form, which shows the shares as they are typed, and the API, which works them out again; what was entered for a split is stored as `split_params` (see `SplitParams`) so an edit form can show it again.
+- A balance is what someone paid minus their shares, plus confirmed payments made minus those received, leaving out deleted expenses, worked out each time (`LEDGER_SQL` in `src/worker/groups.ts`; no stored totals to go stale).
+- Expenses added, edited or deleted go into `activity_log`, shown as the group's activity.
 
 ### Settling up
 
 - The group page suggests who pays whom (`simplifyDebts` in `src/shared/settlements.ts`): the one who owes most pays the one owed most, repeatedly, so a chain A→B→C becomes A→C and there are never more payments than people with a balance, less one.
 - Payments (`settlements` table, `src/worker/routes/settlements.ts`): the payer records one (any amount, to any member); it counts once the payee taps Received, or the payee declines it, or the payer withdraws it while pending. In US-dollar groups, paying someone with a Venmo username opens a prefilled Venmo link (note "wisesplit: <group name>"); otherwise, and in every other currency, it is recorded as cash or other.
 - Someone deactivated can't sign in to confirm, so the other side's word is enough: a payment to them counts as soon as it is recorded (or the payer may confirm one already pending), and the payee may record one received from them. A pending payment between two deactivated members can be withdrawn by the group's owner, so the group can still be settled.
-- Each payment recorded, confirmed, declined or withdrawn goes into `activity_log`.
-- Each expense added also goes into `activity_log`, which later PRs add edits, deletions, payments and membership changes to.
+- Each payment recorded, confirmed, declined or withdrawn goes into `activity_log` and shows in the group's activity.
 
 ### Languages
 

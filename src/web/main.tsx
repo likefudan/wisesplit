@@ -2,7 +2,7 @@ import { render } from "preact";
 import { LocationProvider, Route, Router } from "preact-iso";
 import { Admin } from "./pages/Admin";
 import { AdminSettings } from "./pages/AdminSettings";
-import { NewExpense } from "./pages/Expenses";
+import { EditExpense, NewExpense } from "./pages/Expenses";
 import { GroupPage, NewGroup } from "./pages/Groups";
 import { Home } from "./pages/Home";
 import { Invite } from "./pages/Invite";
@@ -22,6 +22,7 @@ function App() {
         <Route path="/groups/:id" component={GroupPage} />
         <Route path="/groups/:id/expenses/new" component={NewExpense} />
         <Route path="/groups/:id/pay" component={NewPayment} />
+        <Route path="/groups/:id/expenses/:expenseId/edit" component={EditExpense} />
         <Route path="/invite/:token" component={Invite} />
         <Route path="/admin" component={Admin} />
         <Route path="/admin/settings" component={AdminSettings} />
