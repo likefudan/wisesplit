@@ -11,7 +11,7 @@ pushRoutes.use("*", requireApproved);
 pushRoutes.get("/", (c) => c.json({ publicKey: vapidKey(c.env)?.publicKey ?? null }));
 
 pushRoutes.post("/subscribe", async (c) => {
-  const sub = parseSubscription(await readJson(c.req.raw));
+  const sub = await parseSubscription(await readJson(c.req.raw));
   await subscribe(c.env, c.get("user").id, await sessionHash(c), sub);
   return c.body(null, 204);
 });

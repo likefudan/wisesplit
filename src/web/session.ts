@@ -108,9 +108,11 @@ export function chooseLang(next: Lang) {
 
 /** Signs out and goes to the front page (which still shows the account if the server could not be reached). */
 export async function signOut(): Promise<void> {
-  await forgetPushHere();
   try {
     await api("/api/auth/logout", {});
+    // The server forgot this session's push subscriptions; the browser's own goes too, so whoever
+    // uses it next doesn't get this person's notifications.
+    await forgetPushHere();
   } catch {
     // Nothing more to do here; the front page shows where things stand.
   }

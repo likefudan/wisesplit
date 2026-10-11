@@ -1,8 +1,9 @@
 import { importJWK, SignJWT } from "jose";
 import type { Currency } from "../shared/currencies";
 import { type Lang, translate } from "../shared/i18n";
-import { type NotificationData, notificationText } from "../shared/notifications";
+import { notificationText } from "../shared/notifications";
 import type { Env } from "./env";
+import type { Note } from "./notifications";
 import { HttpError, now } from "./http";
 import { concat } from "./lib/bytes";
 import { fromBase64Url, toBase64Url } from "./lib/crypto";
@@ -74,8 +75,17 @@ function isPushService(endpoint: string): boolean {
   }
 }
 
+async function isP256Point(point: Uint8Array): Promise<boolean> {
+  try {
+    await crypto.subtle.importKey("raw", point, { name: "ECDH", namedCurve: "P-256" }, false, []);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Checks a subscription a browser sent; throws 400 if it is not one this site can push to. */
-export function parseSubscription(body: Record<string, unknown>): PushSubscriptionInput {
+export async function parseSubscription(body: Record<string, unknown>): Promise<PushSubscriptionInput> {
   const keys = (body.keys ?? {}) as Record<string, unknown>;
   const { endpoint } = body;
   const p256dh = typeof keys.p256dh === "string" ? keys.p256dh : "";
@@ -83,7 +93,8 @@ export function parseSubscription(body: Record<string, unknown>): PushSubscripti
   if (typeof endpoint !== "string" || !isPushService(endpoint))
     throw new HttpError(400, "invalid_subscription", "Not a push service this site knows");
   // An uncompressed P-256 point, and a 16-byte secret.
-  if (decodeKey(p256dh, 65)?.[0] !== 4 || !decodeKey(auth, 16))
+  const point = decodeKey(p256dh, 65);
+  if (point?.[0] !== 4 || !decodeKey(auth, 16) || !(await isP256Point(point)))
     throw new HttpError(400, "invalid_subscription", "The subscription's keys are not valid");
   return { endpoint, p256dh, auth };
 }
@@ -147,7 +158,14 @@ export function vapidKey(env: Env): { jwk: JsonWebKey; publicKey: string } | nul
 // The VAPID key, imported once per Worker instance (and again only if the secret changes).
 let imported: { secret: string; key: Promise<CryptoKey | Uint8Array> } | null = null;
 function signingKey(secret: string, jwk: JsonWebKey) {
-  if (imported?.secret !== secret) imported = { secret, key: importJWK(jwk, "ES256") };
+  if (imported?.secret !== secret) {
+    const key = importJWK(jwk, "ES256");
+    imported = { secret, key };
+    // A key that won't import is tried again next time rather than remembered.
+    key.catch(() => {
+      if (imported?.key === key) imported = null;
+    });
+  }
   return imported.key;
 }
 
@@ -167,7 +185,9 @@ async function sender(env: Env): Promise<Sender | null> {
         .setProtectedHeader({ alg: "ES256", typ: "JWT" })
         .setAudience(audience)
         .setExpirationTime("12h")
-        .setSubject(env.SITE_ORIGIN)
+        // Who runs the sender, which push services require to be https: (or mailto:); a local
+        // site on http://localhost names the real one.
+        .setSubject(env.SITE_ORIGIN.startsWith("https:") ? env.SITE_ORIGIN : "https://wisesplit.llmat.dev")
         .sign(key);
       tokens.set(audience, t);
     }
@@ -224,9 +244,6 @@ function fairShare<T extends { user_id: string }>(subs: T[], max: number): T[] {
     .map((r) => r.sub);
 }
 
-/** One person to tell, and what they read (as `notify` works it out; src/worker/notifications.ts). */
-export type PushNote = { userId: string } & NotificationData;
-
 /**
  * Pushes each note to every browser its reader turned push on in, in the reader's language, if
  * they are still approved and (for a group's event) still in the group. Subscriptions the push
@@ -235,7 +252,7 @@ export type PushNote = { userId: string } & NotificationData;
 export async function pushNotes(
   env: Env,
   event: { actorId: string; groupId: string | null; subjectId: string | null },
-  notes: PushNote[],
+  notes: Note[],
 ): Promise<void> {
   try {
     const send = await sender(env);

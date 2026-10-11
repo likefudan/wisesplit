@@ -237,6 +237,41 @@ describe("push subscriptions", () => {
     expect(await subscriptionsOf(me.id)).toEqual([laptop.endpoint]);
   });
 
+  it("keeps push on when the same person signs in again, and drops it when someone else does", async () => {
+    const testEnv = { ...withPush, ENVIRONMENT: "local", TEST_LOGIN_SECRET: "s3cret" };
+    const login = (email: string, cookie: string) =>
+      send("/api/test/login", { cookie, body: { email }, headers: { "X-Test-Login-Secret": "s3cret" }, env: testEnv });
+    const ann = await makeUser("approved");
+    const bob = await makeUser("approved");
+    const phone = await makeBrowser();
+    await subscribe(ann, phone);
+    // From here on they sign in as the test login does.
+    for (const p of [ann, bob])
+      await env.DB.prepare("UPDATE users SET google_sub = ? WHERE id = ?").bind(`test:${p.email}`, p.id).run();
+
+    let res = await login(ann.email, ann.cookie);
+    expect(res.status).toBe(204);
+    const again = res.headers.getSetCookie()[0]!.split(";")[0]!;
+    expect(await subscriptionsOf(ann.id)).toEqual([phone.endpoint]);
+
+    res = await login(bob.email, again);
+    expect(res.status).toBe(204);
+    expect(await subscriptionsOf(ann.id)).toEqual([]);
+  });
+
+  it("refuses keys that aren't a point on the curve", async () => {
+    const me = await makeUser("approved");
+    const browser = await makeBrowser();
+    const bad = new Uint8Array(65);
+    bad[0] = 4;
+    bad.fill(7, 1);
+    const res = await post("/api/push/subscribe", me, {
+      endpoint: browser.endpoint,
+      keys: { p256dh: toBase64Url(bad), auth: browser.keys.auth },
+    });
+    expect((await json(res)).error.code).toBe("invalid_subscription");
+  });
+
   it("sends a test message, and forgets a browser the push service says is gone", async () => {
     const me = await makeUser("approved");
     const browser = await makeBrowser();

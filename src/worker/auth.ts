@@ -54,22 +54,20 @@ export async function startSession<E extends { Bindings: Env }>(c: Context<E>, i
   const raw = randomToken();
   const expires = new Date(Date.now() + SESSION_DAYS * 86400_000);
   const old = getCookie(c, sessionCookie(c));
+  const oldHash = old ? await sha256(old) : "";
+  const newHash = await sha256(raw);
   await c.env.DB.batch([
-    c.env.DB.prepare("DELETE FROM sessions WHERE expires_at < ? OR id_hash = ?").bind(
-      now(),
-      old ? await sha256(old) : "",
-    ),
+    // Push turned on in the session this replaces stays on if the same person signs in again, and
+    // goes with that session if someone else does.
+    c.env.DB.prepare(
+      `UPDATE push_subscriptions SET session_hash = ?
+       WHERE session_hash = ? AND user_id = (SELECT id FROM users WHERE google_sub = ?)`,
+    ).bind(newHash, oldHash, identity.google_sub),
+    c.env.DB.prepare("DELETE FROM push_subscriptions WHERE session_hash = ?").bind(oldHash),
+    c.env.DB.prepare("DELETE FROM sessions WHERE expires_at < ? OR id_hash = ?").bind(now(), oldHash),
     c.env.DB.prepare(
       "INSERT INTO sessions (id_hash, google_sub, email, name, picture, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    ).bind(
-      await sha256(raw),
-      identity.google_sub,
-      identity.email,
-      identity.name,
-      identity.picture,
-      now(),
-      expires.toISOString(),
-    ),
+    ).bind(newHash, identity.google_sub, identity.email, identity.name, identity.picture, now(), expires.toISOString()),
     // Keep what Google says about an existing user current: the email decides who is an admin.
     c.env.DB.prepare("UPDATE users SET email = ?, picture = ? WHERE google_sub = ?").bind(
       identity.email,

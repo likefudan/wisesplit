@@ -97,10 +97,10 @@ export async function testPush(): Promise<"sent" | "gone" | "failed"> {
   return result;
 }
 
-/** On signing out: whoever uses this browser next mustn't get this person's notifications. */
+/** After signing out: unsubscribes this browser (the server has already forgotten it). */
 export async function forgetPushHere(): Promise<void> {
   try {
-    if ("serviceWorker" in navigator) await turnOffPush();
+    if ("serviceWorker" in navigator) await (await currentSubscription())?.unsubscribe();
   } catch {
     // Signed out anyway; the server stops sending once the push service says it is gone.
   }
