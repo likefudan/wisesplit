@@ -74,8 +74,9 @@ export async function sendEmails(env: Env, emails: Email[], limit: number): Prom
     }
     if (!res.ok) {
       console.error("emails not sent:", res.status, (await res.text()).slice(0, 500));
-      // Refused, so none went out: they don't count.
-      await env.DB.prepare("UPDATE email_days SET count = MAX(0, count - ?) WHERE day = ?").bind(n, day).run();
+      // Refused (4xx), so none went out and they don't count. After a server error they may have.
+      if (res.status < 500)
+        await env.DB.prepare("UPDATE email_days SET count = MAX(0, count - ?) WHERE day = ?").bind(n, day).run();
       return 0;
     }
     const { errors } = (await res.json().catch(() => ({}))) as { errors?: unknown[] };
@@ -126,7 +127,7 @@ export function notificationEmail(
       /\s+/g,
       " ",
     );
-  // Cut by character, never through the middle of an emoji.
+  // Cut between code points, so never through half of one.
   const subject = Array.from(heading).slice(0, 200).join("");
 
   const text = [

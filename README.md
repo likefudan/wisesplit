@@ -109,7 +109,7 @@ For sign-in (each deploy copies these onto the Worker as secrets; one left unset
 | `ADMIN_EMAILS` | The admin's Google email (comma-separate several). |
 | `TEST_LOGIN_SECRET_STAGING` | Optional: any long random string, to use the test login on staging. Never sent to production. |
 | `RESEND_API_KEY` | A [Resend](https://resend.com) API key (*Sending access* is enough) for the live site's notification emails. Without it (or `EMAIL_FROM`) no email is sent. Resend's free tier sends 100 a day per account, so sharing jaysbadminton's key shares that allowance. |
-| `RESEND_API_KEY_STAGING` | Optional: a key for the test site's emails, best from a separate Resend account so testing can't use up the live site's daily allowance. Without it the test site sends none. |
+| `RESEND_API_KEY_STAGING` | Optional: a key for the test site's emails, best from a separate Resend account so testing can't use up the live site's daily allowance. That account must verify the `EMAIL_FROM` domain too. Without it the test site sends none. |
 | `EMAIL_FROM` | The sender, e.g. `wisesplit <notify@llmat.dev>`, on a domain verified in Resend. |
 
 The same Cloudflare token jaysbadminton uses works if it already has those permissions. The `staging.wisesplit.llmat.dev` and `wisesplit.llmat.dev` DNS records and certificates are created by `wrangler deploy` (custom domains); nothing needs to be added by hand.
