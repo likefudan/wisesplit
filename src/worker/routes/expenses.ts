@@ -7,6 +7,7 @@ import type { Env } from "../env";
 import { balances, changeOf, expenseById, expensePage, parseNewExpense, snapshot } from "../expenses";
 import { groupForMember } from "../groups";
 import { HttpError, now, readJson } from "../http";
+import { deleteObjects } from "../receipts";
 import { randomId } from "../lib/crypto";
 
 /** A group's expenses, balances and activity log, under /api/groups/:id (behind requireApproved there). */
@@ -226,7 +227,7 @@ expenseRoutes.post("/expenses/:expenseId/delete", async (c) => {
   const people = mustBeMembers(me.id, before, null);
   const args = unchangedArgs(group.id, id, version, people);
   const at = now();
-  const [, deleted] = await c.env.DB.batch([
+  const [, deleted, receipt] = await c.env.DB.batch([
     c.env.DB.prepare(
       `INSERT INTO activity_log (id, group_id, actor_id, action, subject_id, data, created_at)
        SELECT ?, ?, ?, 'expense.deleted', ?, ?, ? WHERE ${UNCHANGED_SQL}`,
@@ -234,7 +235,17 @@ expenseRoutes.post("/expenses/:expenseId/delete", async (c) => {
     c.env.DB.prepare(
       `UPDATE expenses SET deleted_at = ?, deleted_by = ? WHERE id = ? AND ${UNCHANGED_SQL} RETURNING id`,
     ).bind(at, me.id, id, ...args),
+    // Its receipt photo goes with it (only if the statement above deleted it).
+    c.env.DB.prepare(
+      `DELETE FROM receipts WHERE expense_id = ?
+         AND EXISTS (SELECT 1 FROM expenses WHERE id = ? AND deleted_at = ? AND deleted_by = ?)
+       RETURNING object_key`,
+    ).bind(id, id, at, me.id),
   ]);
   if (!deleted?.results.length) await whyNot(c.env, group.id, me.id, id, version, people, before);
+  await deleteObjects(
+    c.env,
+    (receipt?.results as { object_key: string }[] | undefined)?.map((r) => r.object_key) ?? [],
+  );
   return c.body(null, 204);
 });

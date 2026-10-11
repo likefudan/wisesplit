@@ -130,6 +130,11 @@ function ActivityRow({
     case "member.removed":
       text = t("activity.member.removed", { actor, name: name(e.subjectId) });
       break;
+    case "receipt.added":
+    case "receipt.replaced":
+    case "receipt.removed":
+      text = t(`activity.${e.action}`, { actor, description: e.data.description });
+      break;
     default:
       // Something a newer version of the site logs: this page has no words for it.
       return null;

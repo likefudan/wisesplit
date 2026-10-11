@@ -27,10 +27,12 @@ import {
   parseCount,
   parsePercent,
 } from "../../shared/money";
-import { ApiError, api } from "../api";
+import { receiptBase } from "../../shared/receipts";
+import { ApiError, api, apiUpload } from "../api";
 import { ErrorMessage, Loading, Page, useErrorText } from "../components";
 import { formatDay, today } from "../format";
 import { useI18n } from "../i18n";
+import { PhotoField, ReceiptPanel, usePhotoDraft } from "../receipts";
 import { RequireUser } from "../RequireUser";
 import type { User } from "../session";
 
@@ -204,6 +206,7 @@ function ExpenseRow({
   const errorText = useErrorText();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const [open, setOpen] = useState(false);
   const money = (units: number) => formatAmount(units, group.currency, lang);
   const shareDetail = useShareDetail(group.currency);
   const share = e.shares.find((s) => s.userId === me.id);
@@ -250,10 +253,13 @@ function ExpenseRow({
 
   return (
     <li>
-      <details class="card expense">
+      <details class="card expense" onToggle={(ev) => setOpen(ev.currentTarget.open)}>
         <summary class="expense-summary">
           <span class="expense-main">
-            <span class="card-title">{e.description}</span>
+            <span class="card-title">
+              {e.description}
+              {e.receipt && <span class="badge">{t("expense.hasReceipt")}</span>}
+            </span>
             <span class="muted small">
               {formatDay(e.date, lang)} · {t("expense.paid", { name: e.paidByName, amount: money(e.amount) })}
               {e.updatedAt && ` · ${t("expense.edited")}`}
@@ -277,6 +283,7 @@ function ExpenseRow({
             })}
           </ul>
         </div>
+        <ReceiptPanel groupId={group.id} expense={e} open={open} onChange={(receipt) => onUpdated({ ...e, receipt })} />
         {fixed ? (
           <p class="muted small">{t("expense.cannotDelete")}</p>
         ) : (
@@ -521,6 +528,15 @@ function ExpenseForm({
   const [checked, setChecked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  // Adding only: a receipt photo to send once the expense is saved (an existing expense's photo is
+  // changed from the list).
+  const draft = usePhotoDraft();
+  // Saved, but its photo didn't go up: the expense's id, to send the photo again.
+  const [savedId, setSavedId] = useState<string | null>(null);
+  // On the retry screen, a new photo (or none) makes the failed upload's error stale.
+  useEffect(() => {
+    if (savedId) setError(null);
+  }, [draft.photo]);
 
   const amount = parseAmount(amountText, group.currency);
   const split = readSplit(method, amount, people, ticked, entered, group.currency);
@@ -544,7 +560,8 @@ function ExpenseForm({
     e.preventDefault();
     setChecked(true);
     setError(null);
-    if (amount === null || !split.shares) return;
+    // A photo that couldn't be read must be replaced or taken out first, not dropped unseen.
+    if (amount === null || !split.shares || draft.busy || draft.error !== null) return;
     setBusy(true);
     const fields: NewExpenseFields = {
       description,
@@ -556,19 +573,44 @@ function ExpenseForm({
       splitParams: split.params,
     };
     const path = `/api/groups/${encodeURIComponent(group.id)}/expenses`;
+    let id = savedId;
     try {
       if (expense)
         await api(`${path}/${encodeURIComponent(expense.id)}`, {
           ...fields,
           version: expense.version,
         } satisfies ExpenseEdit);
-      else await api(path, fields);
+      else if (!id) id = (await api<{ expense: Expense }>(path, fields)).expense.id;
+      if (id && draft.photo) await apiUpload(receiptBase(group.id, id), draft.photo);
       route(back, true);
     } catch (err) {
+      setSavedId(id);
       setError(err);
       setBusy(false);
     }
   }
+
+  if (savedId)
+    return (
+      <Page title={t("expenseNew.title")}>
+        <p class="muted">{group.name}</p>
+        <form class="form" onSubmit={submit}>
+          <p>{t("expenseNew.photoFailed")}</p>
+          <PhotoField draft={draft} disabled={busy} />
+          {error !== null && <ErrorMessage>{errorText(error)}</ErrorMessage>}
+          <div class="actions">
+            {draft.photo && (
+              <button type="submit" class="button" disabled={busy || draft.busy}>
+                {t("expenseNew.retryPhoto")}
+              </button>
+            )}
+            <a class="button secondary" href={back}>
+              {t("expenseNew.backToGroup")}
+            </a>
+          </div>
+        </form>
+      </Page>
+    );
 
   // How far the exact amounts or percentages are from adding up, as they are typed.
   let tally: { text: string; done: boolean } | null = null;
@@ -724,6 +766,7 @@ function ExpenseForm({
           {tally && <small class={tally.done ? "success" : checked ? "error" : "muted"}>{tally.text}</small>}
           {splitProblem && <small class="error">{splitProblem}</small>}
         </fieldset>
+        {!expense && <PhotoField draft={draft} disabled={busy} />}
         {error !== null && <ErrorMessage>{errorText(error)}</ErrorMessage>}
         <div class="actions">
           {gone ? null : stale ? (
@@ -731,7 +774,7 @@ function ExpenseForm({
               {t("expenseEdit.reload")}
             </button>
           ) : (
-            <button type="submit" class="button" disabled={busy}>
+            <button type="submit" class="button" disabled={busy || draft.busy}>
               {t("expenseNew.submit")}
             </button>
           )}

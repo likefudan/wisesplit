@@ -49,6 +49,8 @@ export type ActivityEntry = {
   | { action: "member.left"; data: null }
   // Taken out by the owner.
   | { action: "member.removed"; data: null }
+  // A receipt photo of the expense `subjectId` (src/worker/routes/receipts.ts).
+  | { action: "receipt.added" | "receipt.replaced" | "receipt.removed"; data: { description: string } }
 );
 
 export interface ActivityPage {

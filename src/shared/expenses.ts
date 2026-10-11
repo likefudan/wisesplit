@@ -47,6 +47,8 @@ export interface Expense {
   updatedAt: string | null;
   /** Goes up by one with every edit; an edit names the version it started from. */
   version: number;
+  /** The receipt photo's version (see `receiptPath` in receipts.ts), or null when there is none. */
+  receipt: string | null;
 }
 
 /** What POST /api/groups/:id/expenses takes. */
