@@ -157,6 +157,8 @@ function ActivityRow({
       lines.push(
         t("activity.change.splitMethod", { before: method(before.splitMethod), after: method(after.splitMethod) }),
       );
+    // The split's own numbers changed, but not what anyone pays (2 shares each instead of 1).
+    if ("splitParams" in after && !after.shares && !after.splitMethod) lines.push(t("activity.change.splitParams"));
     if (before.shares && after.shares) {
       const was = before.shares;
       const will = after.shares;

@@ -493,16 +493,12 @@ function ExpenseForm({
   const [date, setDate] = useState(expense?.date ?? today);
   const [method, setMethod] = useState<SplitMethod>(expense?.splitMethod ?? "equal");
   // Adding: everyone who can still use the site, to start with: ticked for an equal split (with or
-  // without adjustments), one share each by shares. Editing: the split as it was entered.
-  const active = group.members.filter((m) => !m.deactivated).map((m) => m.id);
-  const [ticked, setTicked] = useState(
-    () =>
-      new Set(
-        expense && (expense.splitMethod === "equal" || expense.splitMethod === "adjust")
-          ? expense.shares.map((s) => s.userId)
-          : active,
-      ),
-  );
+  // without adjustments), one share each by shares. Editing: whoever is in it, and the split as it
+  // was entered.
+  const active = expense
+    ? expense.shares.map((s) => s.userId)
+    : group.members.filter((m) => !m.deactivated).map((m) => m.id);
+  const [ticked, setTicked] = useState(() => new Set(active));
   const [entered, setEntered] = useState<Entered>(() => {
     const all: Entered = {
       exact: {},

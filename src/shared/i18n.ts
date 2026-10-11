@@ -274,6 +274,7 @@ const en = {
   "activity.change.date": "Date: {before} → {after}",
   "activity.change.splitMethod": "Split: {before} → {after}",
   "activity.change.share": "{name}'s share: {before} → {after}",
+  "activity.change.splitParams": "How it's split was changed; everyone pays the same as before.",
   "activity.someone": "someone",
 } as const;
 
@@ -531,6 +532,7 @@ const zh: Record<MessageKey, string> = {
   "activity.change.date": "日期：{before} → {after}",
   "activity.change.splitMethod": "分摊方式：{before} → {after}",
   "activity.change.share": "{name} 的份额：{before} → {after}",
+  "activity.change.splitParams": "改了分摊的数字，但每人应付的金额不变。",
   "activity.someone": "某人",
 };
 
