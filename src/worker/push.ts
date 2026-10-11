@@ -37,6 +37,12 @@ export const MAX_PUSH_DEVICES = 10;
 /** Messages one event sends at most (Workers on the free plan may make 50 requests per request). */
 const MAX_PUSHES = 40;
 
+/**
+ * How long one event's pushes may take in all (ms). They go out after the answer, which Workers
+ * allow 30 seconds; this leaves time to remove the subscriptions found gone.
+ */
+const PUSH_BUDGET_MS = 20_000;
+
 /** How long a push service keeps a message for a phone that is off (seconds). */
 const TTL = 24 * 3600;
 
@@ -169,7 +175,12 @@ function signingKey(secret: string, jwk: JsonWebKey) {
   return imported.key;
 }
 
-type Sender = (sub: PushSubscriptionInput, message: PushMessage) => Promise<"sent" | "gone" | "failed">;
+/** Sends one message, giving up after `timeoutMs`. */
+type Sender = (
+  sub: PushSubscriptionInput,
+  message: PushMessage,
+  timeoutMs?: number,
+) => Promise<"sent" | "gone" | "failed">;
 
 /** Sends messages signed with this site's key; null if push isn't set up. */
 async function sender(env: Env): Promise<Sender | null> {
@@ -193,7 +204,7 @@ async function sender(env: Env): Promise<Sender | null> {
     }
     return t;
   };
-  return async (sub, message) => {
+  return async (sub, message, timeoutMs = 10_000) => {
     try {
       const body = await encryptPayload(enc.encode(JSON.stringify(message)), sub);
       const res = await fetch(sub.endpoint, {
@@ -206,7 +217,7 @@ async function sender(env: Env): Promise<Sender | null> {
           Urgency: "normal",
         },
         body,
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(timeoutMs),
       });
       if (res.ok) return "sent";
       // The browser unsubscribed, or the subscription expired: it will never work again.
@@ -289,7 +300,11 @@ export async function pushNotes(
     const group = (groups!.results as { name: string; currency: Currency }[])[0] ?? null;
     const gone: string[] = [];
     const chosen = fairShare(subs!.results as (PushSubscriptionInput & { user_id: string; lang: Lang })[], MAX_PUSHES);
+    const deadline = Date.now() + PUSH_BUDGET_MS;
     await inTurn(chosen, async (sub) => {
+      // A slow push service mustn't use up the time the rest (and the clean-up) need.
+      const left = deadline - Date.now();
+      if (left < 1000) return;
       const note = notes.find((n) => n.userId === sub.user_id)!;
       const said = notificationText({ ...note, actorId: event.actorId, group }, sub.lang, (id) =>
         id === sub.user_id
@@ -303,7 +318,7 @@ export async function pushNotes(
         url: event.groupId ? `/groups/${encodeURIComponent(event.groupId)}` : "/",
         tag: event.subjectId ?? event.groupId ?? note.kind,
       };
-      if ((await send(sub, message)) === "gone") gone.push(sub.endpoint);
+      if ((await send(sub, message, Math.min(5000, left))) === "gone") gone.push(sub.endpoint);
     });
     await forget(env, gone);
   } catch (err) {
