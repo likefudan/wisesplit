@@ -176,11 +176,11 @@ function NotificationRow({
 }
 
 export function NotificationSettingsPage() {
-  return <RequireUser>{() => <SettingsForm />}</RequireUser>;
+  return <RequireUser>{(me) => <SettingsForm me={me} />}</RequireUser>;
 }
 
 /** How to hear about things: on the site, and by push in this browser. */
-function SettingsForm() {
+function SettingsForm({ me }: { me: User }) {
   const { t } = useI18n();
   const errorText = useErrorText();
   const [settings, setSettings] = useState<NotificationSettings | null>(null);
@@ -241,7 +241,7 @@ function SettingsForm() {
             <span>{t("notifySettings.inApp")}</span>
           </label>
           <small class="muted">{t("notifySettings.inAppHint")}</small>
-          <PushSetting />
+          <PushSetting me={me} />
           {message &&
             (message.ok ? (
               <p class="success" role="status">
@@ -260,7 +260,7 @@ function SettingsForm() {
  * Push in this browser: a switch, or why there is none (not set up, not supported, or on an
  * iPhone outside the Home Screen). On and off are per browser, so this reads the browser itself.
  */
-function PushSetting() {
+function PushSetting({ me }: { me: User }) {
   const { t } = useI18n();
   const errorText = useErrorText();
   const support = pushSupport();
@@ -281,7 +281,7 @@ function PushSetting() {
         setPublicKey(publicKey);
         if (!publicKey) return;
         try {
-          const enabled = await checkPush(publicKey);
+          const enabled = await checkPush(publicKey, me.id);
           if (alive) setOn(enabled);
         } catch (error) {
           // The switch still shows, as the browser has it, so push can be turned off or on again.
@@ -306,7 +306,7 @@ function PushSetting() {
     setBusy(true);
     setMessage(null);
     try {
-      if (next) await turnOnPush(publicKey);
+      if (next) await turnOnPush(publicKey, me.id);
       else await turnOffPush();
       setOn(next);
     } catch (error) {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
-import { forgetPushHere } from "./push";
+import { dropOthersPush, forgetPushHere } from "./push";
 import type { Lang } from "../shared/i18n";
 import type { PublicUser } from "../shared/users";
 import { ApiError, api } from "./api";
@@ -34,6 +34,7 @@ export async function refreshSession(): Promise<void> {
   try {
     const data = await api<Session>("/api/auth/session");
     publish({ state: "ok", data });
+    if (data.user) dropOthersPush(data.user.id);
     if (data.user?.status !== "approved") return;
     // A language picked before it could be saved (while loading, or before approval) is the
     // newest choice: save it. Otherwise the language saved in the profile wins over this browser's.

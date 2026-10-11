@@ -12,12 +12,13 @@ const list = spawnSync("npx", ["wrangler", "secret", "list", "--format", "json",
 });
 if (list.error) throw list.error;
 // Only a list read for sure may lead to a new key; otherwise stop rather than risk replacing one.
-// The JSON is the array on stdout (a line starting "[{" or "[]"), whatever wrangler prints around it.
+// The JSON is the array on stdout (from a line starting "[{" or "[]" to the last "]"), whatever
+// wrangler prints around it.
 let names = null;
 const start = list.stdout.search(/^\s*\[\s*(\{|\])/m);
 if (list.status === 0 && start >= 0)
   try {
-    names = JSON.parse(list.stdout.slice(start)).map((s) => s.name);
+    names = JSON.parse(list.stdout.slice(start, list.stdout.lastIndexOf("]") + 1)).map((s) => s.name);
   } catch {
     // Reported below.
   }

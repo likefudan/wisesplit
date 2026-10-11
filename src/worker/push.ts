@@ -245,6 +245,18 @@ function fairShare<T extends { user_id: string }>(subs: T[], max: number): T[] {
 }
 
 /**
+ * Runs `task` on each item, a few at a time: a Worker keeps only six connections open at once, so
+ * any more would wait in line while their timeouts ran.
+ */
+async function inTurn<T>(items: T[], task: (item: T) => Promise<void>, atOnce = 6): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) await task(items[next++]!);
+  };
+  await Promise.all(Array.from({ length: Math.min(atOnce, items.length) }, worker));
+}
+
+/**
  * Pushes each note to every browser its reader turned push on in, in the reader's language, if
  * they are still approved and (for a group's event) still in the group. Subscriptions the push
  * service says are gone are removed. Never throws.
@@ -276,26 +288,23 @@ export async function pushNotes(
     const names = new Map((users!.results as { id: string; name: string }[]).map((u) => [u.id, u.name]));
     const group = (groups!.results as { name: string; currency: Currency }[])[0] ?? null;
     const gone: string[] = [];
-    await Promise.all(
-      fairShare(subs!.results as (PushSubscriptionInput & { user_id: string; lang: Lang })[], MAX_PUSHES).map(
-        async (sub) => {
-          const note = notes.find((n) => n.userId === sub.user_id)!;
-          const said = notificationText({ ...note, actorId: event.actorId, group }, sub.lang, (id) =>
-            id === sub.user_id
-              ? translate(sub.lang, "notifications.you")
-              : (id && names.get(id)) || translate(sub.lang, "activity.someone"),
-          );
-          if (!said) return;
-          const message: PushMessage = {
-            title: group?.name ?? translate(sub.lang, "app.name"),
-            body: said.detail ? `${said.text}\n${said.detail}` : said.text,
-            url: event.groupId ? `/groups/${encodeURIComponent(event.groupId)}` : "/",
-            tag: event.subjectId ?? event.groupId ?? note.kind,
-          };
-          if ((await send(sub, message)) === "gone") gone.push(sub.endpoint);
-        },
-      ),
-    );
+    const chosen = fairShare(subs!.results as (PushSubscriptionInput & { user_id: string; lang: Lang })[], MAX_PUSHES);
+    await inTurn(chosen, async (sub) => {
+      const note = notes.find((n) => n.userId === sub.user_id)!;
+      const said = notificationText({ ...note, actorId: event.actorId, group }, sub.lang, (id) =>
+        id === sub.user_id
+          ? translate(sub.lang, "notifications.you")
+          : (id && names.get(id)) || translate(sub.lang, "activity.someone"),
+      );
+      if (!said) return;
+      const message: PushMessage = {
+        title: group?.name ?? translate(sub.lang, "app.name"),
+        body: said.detail ? `${said.text}\n${said.detail}` : said.text,
+        url: event.groupId ? `/groups/${encodeURIComponent(event.groupId)}` : "/",
+        tag: event.subjectId ?? event.groupId ?? note.kind,
+      };
+      if ((await send(sub, message)) === "gone") gone.push(sub.endpoint);
+    });
     await forget(env, gone);
   } catch (err) {
     console.error("pushing failed:", err);

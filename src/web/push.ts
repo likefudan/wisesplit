@@ -35,6 +35,41 @@ async function currentSubscription(): Promise<PushSubscription | null> {
   return (await registration?.pushManager.getSubscription()) ?? null;
 }
 
+// Whose push this browser's subscription is, so someone else signing in here doesn't inherit it.
+const OWNER = "push-owner";
+const owner = {
+  get: (): string | null => {
+    try {
+      return localStorage.getItem(OWNER);
+    } catch {
+      return null;
+    }
+  },
+  set: (userId: string | null) => {
+    try {
+      if (userId) localStorage.setItem(OWNER, userId);
+      else localStorage.removeItem(OWNER);
+    } catch {
+      // Blocked storage: nothing to go on later, so nothing is undone either.
+    }
+  },
+};
+
+/**
+ * Unsubscribes this browser if its push is someone else's than `userId`, who has signed in here
+ * (their server row went when they signed out, or goes once the push service says it is gone).
+ */
+export async function dropOthersPush(userId: string): Promise<void> {
+  const mine = owner.get();
+  if (!mine || mine === userId || !("serviceWorker" in navigator)) return;
+  try {
+    await (await currentSubscription())?.unsubscribe();
+    owner.set(null);
+  } catch {
+    // Tried again on the next visit.
+  }
+}
+
 /** Whether this browser has a push subscription, without asking the server anything. */
 export const hasPushSubscription = async () => (await currentSubscription()) !== null;
 
@@ -43,7 +78,8 @@ export const hasPushSubscription = async () => (await currentSubscription()) !==
  * may have dropped it, or it may have been made with a key the site no longer uses: then it is
  * made again with `publicKey`).
  */
-export async function checkPush(publicKey: string): Promise<boolean> {
+export async function checkPush(publicKey: string, userId: string): Promise<boolean> {
+  await dropOthersPush(userId);
   const sub = await currentSubscription();
   if (!sub || Notification.permission !== "granted") return false;
   const key = sub.options.applicationServerKey;
@@ -52,15 +88,16 @@ export async function checkPush(publicKey: string): Promise<boolean> {
     const { endpoint } = sub;
     await sub.unsubscribe();
     await api("/api/push/unsubscribe", { endpoint }).catch(() => {});
-    await turnOnPush(publicKey);
+    await turnOnPush(publicKey, userId);
     return true;
   }
   await api("/api/push/subscribe", sub.toJSON());
+  owner.set(userId);
   return true;
 }
 
 /** Asks for permission (if not given yet), subscribes this browser and tells the server. */
-export async function turnOnPush(publicKey: string): Promise<void> {
+export async function turnOnPush(publicKey: string, userId: string): Promise<void> {
   // Asked first, while the tap that turned it on still counts (Safari needs that).
   if ((await Notification.requestPermission()) !== "granted") throw new PushDenied();
   await navigator.serviceWorker.register("/sw.js");
@@ -71,6 +108,7 @@ export async function turnOnPush(publicKey: string): Promise<void> {
   });
   try {
     await api("/api/push/subscribe", sub.toJSON());
+    owner.set(userId);
   } catch (err) {
     // The server doesn't know it, so don't leave it looking on.
     await sub.unsubscribe().catch(() => {});
@@ -84,6 +122,7 @@ export async function turnOffPush(): Promise<void> {
   if (!sub) return;
   const { endpoint } = sub;
   await sub.unsubscribe();
+  owner.set(null);
   await api("/api/push/unsubscribe", { endpoint });
 }
 
@@ -101,6 +140,7 @@ export async function testPush(): Promise<"sent" | "gone" | "failed"> {
 export async function forgetPushHere(): Promise<void> {
   try {
     if ("serviceWorker" in navigator) await (await currentSubscription())?.unsubscribe();
+    owner.set(null);
   } catch {
     // Signed out anyway; the server stops sending once the push service says it is gone.
   }
