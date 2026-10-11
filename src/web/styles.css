@@ -434,3 +434,27 @@ h2 {
   flex: 1;
   min-width: 0;
 }
+
+.expense-actions {
+  margin-top: 8px;
+}
+
+.activity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.activity-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+.activity-changes {
+  margin: 0;
+  padding-left: 20px;
+}

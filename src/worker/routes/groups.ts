@@ -51,6 +51,10 @@ groupRoutes.post("/", async (c) => {
       at,
       me.id,
     ),
+    c.env.DB.prepare(
+      `INSERT INTO activity_log (id, group_id, actor_id, action, subject_id, data, created_at)
+       VALUES (?, ?, ?, 'group.created', NULL, ?, ?)`,
+    ).bind(randomId(), id, me.id, JSON.stringify({ name, currency }), at),
   ]);
   return c.json({ group: await groupDetail(c.env, { id, name, currency, owner_id: me.id, created_at: at }) });
 });
@@ -72,17 +76,26 @@ groupRoutes.post("/:id/members", async (c) => {
     .bind(email)
     .first<{ id: string }>();
   if (!user) throw userNotFound();
-  let added: unknown = null;
+  let added = false;
+  const at = now();
   try {
-    // The one adding must still be in the group, and the one added still approved.
-    added = await c.env.DB.prepare(
-      `INSERT INTO group_members (group_id, user_id, joined_at, added_by)
-       SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?)
-         AND EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'approved')
-       RETURNING user_id`,
-    )
-      .bind(group.id, user.id, now(), me.id, group.id, me.id, user.id)
-      .first();
+    const [insert] = await c.env.DB.batch([
+      // The one adding must still be in the group, and the one added still approved.
+      c.env.DB.prepare(
+        `INSERT INTO group_members (group_id, user_id, joined_at, added_by)
+         SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?)
+           AND EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'approved')
+         RETURNING user_id`,
+      ).bind(group.id, user.id, at, me.id, group.id, me.id, user.id),
+      // Only if the statement above added them, which leaves this exact mark (a second add of the
+      // same person fails on the primary key, undoing the whole batch).
+      c.env.DB.prepare(
+        `INSERT INTO activity_log (id, group_id, actor_id, action, subject_id, data, created_at)
+         SELECT ?, ?, ?, 'member.added', ?, NULL, ? WHERE EXISTS (SELECT 1 FROM group_members
+           WHERE group_id = ? AND user_id = ? AND joined_at = ? AND added_by = ?)`,
+      ).bind(randomId(), group.id, me.id, user.id, at, group.id, user.id, at, me.id),
+    ]);
+    added = !!insert?.results.length;
   } catch (err) {
     if (!(err instanceof Error && /UNIQUE|PRIMARY KEY/i.test(err.message))) throw err;
     throw new HttpError(409, "already_member", "Already in this group");
@@ -98,13 +111,23 @@ groupRoutes.post("/:id/members", async (c) => {
 /**
  * Takes someone out of a group, if they may go (`MAY_NOT_LEAVE_SQL`), with the invite links they
  * made for it that are still unused: a link stops working with its maker (src/worker/invites.ts),
- * and stays dead if they come back. Whether they were taken out.
+ * and stays dead if they come back. `by` is who does it: themselves (leaving) or the owner. Whether
+ * they were taken out.
  */
-async function removeMember(env: Env, groupId: string, userId: string): Promise<boolean> {
-  const [removed] = await env.DB.batch([
+async function removeMember(env: Env, groupId: string, userId: string, by: string): Promise<boolean> {
+  // Checked by the log entry and then by the removal, so the entry is written only with it.
+  const mayGo = `EXISTS (SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?) AND NOT ${MAY_NOT_LEAVE_SQL}`;
+  const mayGoArgs = [groupId, userId, ...mayNotLeaveArgs(groupId, userId)];
+  const [, removed] = await env.DB.batch([
     env.DB.prepare(
-      `DELETE FROM group_members WHERE group_id = ? AND user_id = ? AND NOT ${MAY_NOT_LEAVE_SQL} RETURNING user_id`,
-    ).bind(groupId, userId, ...mayNotLeaveArgs(groupId, userId)),
+      `INSERT INTO activity_log (id, group_id, actor_id, action, subject_id, data, created_at)
+       SELECT ?, ?, ?, ?, ?, NULL, ? WHERE ${mayGo}`,
+    ).bind(randomId(), groupId, by, by === userId ? "member.left" : "member.removed", userId, now(), ...mayGoArgs),
+    env.DB.prepare(`DELETE FROM group_members WHERE group_id = ? AND user_id = ? AND ${mayGo} RETURNING user_id`).bind(
+      groupId,
+      userId,
+      ...mayGoArgs,
+    ),
     env.DB.prepare(
       `DELETE FROM group_invites WHERE group_id = ? AND created_by = ? AND used_at IS NULL
          AND NOT EXISTS (SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?)`,
@@ -120,7 +143,7 @@ groupRoutes.post("/:id/members/:userId/remove", async (c) => {
   const userId = c.req.param("userId");
   if (group.owner_id !== me.id) throw ownerOnly();
   if (userId === me.id) throw new HttpError(400, "owner_cannot_leave", "The owner can't leave the group");
-  if (!(await removeMember(c.env, group.id, userId))) {
+  if (!(await removeMember(c.env, group.id, userId, me.id))) {
     if (await isMember(c.env, group.id, userId)) throw notSettled();
     throw new HttpError(404, "not_a_member", "Not in this group");
   }
@@ -132,7 +155,8 @@ groupRoutes.post("/:id/leave", async (c) => {
   const group = await groupForMember(c.env, c.req.param("id"), me.id);
   if (group.owner_id === me.id) throw new HttpError(400, "owner_cannot_leave", "The owner can't leave the group");
   // Not taken out and still there: not settled. (Gone anyway: removed meanwhile, which is fine.)
-  if (!(await removeMember(c.env, group.id, me.id)) && (await isMember(c.env, group.id, me.id))) throw notSettled();
+  if (!(await removeMember(c.env, group.id, me.id, me.id)) && (await isMember(c.env, group.id, me.id)))
+    throw notSettled();
   return c.body(null, 204);
 });
 

@@ -159,9 +159,11 @@ describe("adding expenses", () => {
     expect((await send(`/api/groups/${id}/expenses`)).status).toBe(401);
     const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM expenses WHERE group_id = ?").bind(id).first("n");
     expect(count).toBe(0);
-    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM activity_log WHERE group_id = ?").bind(id).first("n")).toBe(
-      0,
-    );
+    expect(
+      await env.DB.prepare("SELECT COUNT(*) AS n FROM activity_log WHERE group_id = ? AND action LIKE 'expense.%'")
+        .bind(id)
+        .first("n"),
+    ).toBe(0);
   });
 
   it("works in currencies without decimals", async () => {
@@ -348,8 +350,11 @@ describe("the expense list", () => {
       ).toBe(200);
     const first = await json(await send(`/api/groups/${id}/expenses`, { cookie: bob.cookie }));
     expect(first.expenses).toHaveLength(20);
-    expect(first.next).toBe(first.expenses[19].id);
-    const second = await json(await send(`/api/groups/${id}/expenses?before=${first.next}`, { cookie: bob.cookie }));
+    const last = first.expenses[19];
+    expect(first.next).toBe(`${last.date}|${last.createdAt}|${last.id}`);
+    const second = await json(
+      await send(`/api/groups/${id}/expenses?before=${encodeURIComponent(first.next)}`, { cookie: bob.cookie }),
+    );
     expect(second.expenses).toHaveLength(5);
     expect(second.next).toBeNull();
     const all = [...first.expenses, ...second.expenses];
@@ -364,7 +369,10 @@ describe("the expense list", () => {
     expect(byDay(order)).toEqual(byDay(expected));
     expect(first.expenses[0]).toMatchObject({ date: "2026-03-01", shares: expect.any(Array) });
 
-    expect((await send(`/api/groups/${id}/expenses?before=nope`, { cookie: bob.cookie })).status).toBe(400);
+    for (const cursor of ["nope", "2026-01-01|x", "x|y|z", "2026-01-01|a|b|c"])
+      expect(
+        (await send(`/api/groups/${id}/expenses?before=${encodeURIComponent(cursor)}`, { cookie: bob.cookie })).status,
+      ).toBe(400);
   });
 
   it("is empty for a new group, where everyone is settled", async () => {

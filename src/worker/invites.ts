@@ -59,6 +59,17 @@ export async function findInvite(env: Env, token: string) {
 }
 
 /**
+ * The activity log entry for `userId` joining with the link: written only if the link was just
+ * used by them (at `at`), which leaves that mark on it.
+ */
+const joinedLog = (env: Env, userId: string, at: string, hash: string) =>
+  env.DB.prepare(
+    `INSERT INTO activity_log (id, group_id, actor_id, action, subject_id, data, created_at)
+     SELECT ?, group_id, ?, 'member.joined', ?, json_object('invitedBy', created_by), ?
+     FROM group_invites WHERE token_hash = ? AND used_by = ? AND used_at = ?`,
+  ).bind(randomId(), userId, userId, at, hash, userId, at);
+
+/**
  * An approved user follows an invite link: they join its group and the link is used up. Throws
  * `inviteUnusable` if the link can't be used, the user is no longer approved, or is in the group
  * already. (Someone still waiting for approval is not let in by a link: they may be waiting
@@ -80,6 +91,7 @@ export async function joinByInvite(env: Env, token: string, user: UserRow): Prom
       `INSERT INTO group_members (group_id, user_id, joined_at, added_by)
        SELECT group_id, ?, ?, created_by FROM group_invites WHERE token_hash = ? AND used_by = ? AND used_at = ?`,
     ).bind(user.id, at, hash, user.id, at),
+    joinedLog(env, user.id, at, hash),
   ]);
   if (!use?.meta.changes) throw inviteUnusable();
 }
@@ -112,6 +124,7 @@ export async function registerByInvite(
          SELECT group_id, ?, ?, created_by FROM group_invites WHERE token_hash = ? AND used_by = ?
          RETURNING group_id`,
       ).bind(id, at, hash, id),
+      joinedLog(env, id, at, hash),
     ]);
   } catch (err) {
     // Signed up meanwhile in another tab: the unique Google id.

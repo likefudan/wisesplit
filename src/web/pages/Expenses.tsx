@@ -4,9 +4,12 @@ import type { Currency } from "../../shared/currencies";
 import {
   type Balance,
   type Expense,
+  type ExpenseEdit,
   type ExpensePage,
   FULL_PERCENT,
   MAX_SHARES,
+  type NewExpense as NewExpenseFields,
+  netOf,
   SPLIT_METHODS,
   SplitError,
   type SplitErrorCode,
@@ -14,7 +17,7 @@ import {
   type SplitParams,
   splitShares,
 } from "../../shared/expenses";
-import type { GroupDetail, GroupMember } from "../../shared/groups";
+import type { GroupDetail } from "../../shared/groups";
 import {
   amountInput,
   formatAmount,
@@ -24,7 +27,7 @@ import {
   parseCount,
   parsePercent,
 } from "../../shared/money";
-import { api } from "../api";
+import { ApiError, api } from "../api";
 import { ErrorMessage, Loading, Page, useErrorText } from "../components";
 import { formatDay, today } from "../format";
 import { useI18n } from "../i18n";
@@ -88,8 +91,8 @@ export function Balances({ group, me }: { group: GroupDetail; me: User }) {
   );
 }
 
-/** The group's expenses, newest first, a page at a time. */
-export function ExpenseList({ group, me }: { group: GroupDetail; me: User }) {
+/** The group's expenses, newest first, a page at a time. `onChange` runs after one is deleted. */
+export function ExpenseList({ group, me, onChange }: { group: GroupDetail; me: User; onChange: () => void }) {
   const { t } = useI18n();
   const errorText = useErrorText();
   const [expenses, setExpenses] = useState<Expense[] | null>(null);
@@ -103,7 +106,11 @@ export function ExpenseList({ group, me }: { group: GroupDetail; me: User }) {
     setError(null);
     try {
       const page = await api<ExpensePage>(before ? `${path}?before=${encodeURIComponent(before)}` : path);
-      setExpenses((list) => (before && list ? [...list, ...page.expenses] : page.expenses));
+      // An expense moved to an older day since the last page may come again: shown once, as it is now.
+      const fresh = new Set(page.expenses.map((e) => e.id));
+      setExpenses((list) =>
+        before && list ? [...list.filter((x) => !fresh.has(x.id)), ...page.expenses] : page.expenses,
+      );
       setNext(page.next);
     } catch (err) {
       setError(err);
@@ -131,7 +138,20 @@ export function ExpenseList({ group, me }: { group: GroupDetail; me: User }) {
       ) : (
         <ul class="card-list">
           {expenses.map((e) => (
-            <ExpenseRow key={e.id} expense={e} group={group} me={me} />
+            <ExpenseRow
+              key={e.id}
+              expense={e}
+              group={group}
+              me={me}
+              onDeleted={() => {
+                setExpenses((list) => (list ? list.filter((x) => x.id !== e.id) : list));
+                onChange();
+              }}
+              onUpdated={(latest) => {
+                setExpenses((list) => (list ? list.map((x) => (x.id === e.id ? latest : x)) : list));
+                onChange();
+              }}
+            />
           ))}
         </ul>
       )}
@@ -167,11 +187,31 @@ function useShareDetail(currency: Currency) {
   };
 }
 
-function ExpenseRow({ expense: e, group, me }: { expense: Expense; group: GroupDetail; me: User }) {
+function ExpenseRow({
+  expense: e,
+  group,
+  me,
+  onDeleted,
+  onUpdated,
+}: {
+  expense: Expense;
+  group: GroupDetail;
+  me: User;
+  onDeleted: () => void;
+  onUpdated: (latest: Expense) => void;
+}) {
   const { lang, t } = useI18n();
+  const errorText = useErrorText();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
   const money = (units: number) => formatAmount(units, group.currency, lang);
   const shareDetail = useShareDetail(group.currency);
   const share = e.shares.find((s) => s.userId === me.id);
+  // Someone who has left owes or is owed something in it: deleting it would change that, which the
+  // server turns down.
+  const fixed = [...netOf({ ...e, shares: Object.fromEntries(e.shares.map((s) => [s.userId, s.amount])) })].some(
+    ([id, net]) => net !== 0 && !group.members.some((m) => m.id === id),
+  );
   const lent = (e.paidBy === me.id ? e.amount : 0) - (share?.amount ?? 0);
   const [status, cls] =
     e.paidBy !== me.id && !share
@@ -181,6 +221,33 @@ function ExpenseRow({ expense: e, group, me }: { expense: Expense; group: GroupD
         : lent > 0
           ? [t("expense.youLent", { amount: money(lent) }), "success"]
           : [t("expense.youBorrowed", { amount: money(-lent) }), "error"];
+
+  async function remove() {
+    if (!confirm(t("expense.confirmDelete", { description: e.description }))) return;
+    setBusy(true);
+    setError(null);
+    const path = `/api/groups/${encodeURIComponent(group.id)}/expenses/${encodeURIComponent(e.id)}`;
+    try {
+      await api(`${path}/delete`, { version: e.version });
+      onDeleted();
+    } catch (err) {
+      setBusy(false);
+      const code = err instanceof ApiError ? err.code : null;
+      // Already deleted by someone else: it goes from the list all the same.
+      if (code === "expense_not_found") return onDeleted();
+      setError(err);
+      // Changed by someone else since the list was loaded: show it as it is now, to delete again
+      // if that's still what they want.
+      if (code === "expense_changed")
+        api<{ expense: Expense }>(path)
+          .then((r) => onUpdated(r.expense))
+          .catch((err) => {
+            if (err instanceof ApiError && err.code === "expense_not_found") onDeleted();
+            else setError(err);
+          });
+    }
+  }
+
   return (
     <li>
       <details class="card expense">
@@ -189,6 +256,7 @@ function ExpenseRow({ expense: e, group, me }: { expense: Expense; group: GroupD
             <span class="card-title">{e.description}</span>
             <span class="muted small">
               {formatDay(e.date, lang)} · {t("expense.paid", { name: e.paidByName, amount: money(e.amount) })}
+              {e.updatedAt && ` · ${t("expense.edited")}`}
             </span>
           </span>
           <span class={`expense-status small ${cls}`}>{status}</span>
@@ -209,6 +277,28 @@ function ExpenseRow({ expense: e, group, me }: { expense: Expense; group: GroupD
             })}
           </ul>
         </div>
+        {fixed ? (
+          <p class="muted small">{t("expense.cannotDelete")}</p>
+        ) : (
+          error !== null && (
+            <ErrorMessage>
+              {error instanceof ApiError && error.code === "expense_changed"
+                ? t("expense.changedBeforeDelete")
+                : errorText(error)}
+            </ErrorMessage>
+          )
+        )}
+        <div class="actions expense-actions">
+          <a
+            class="button small secondary"
+            href={`/groups/${encodeURIComponent(group.id)}/expenses/${encodeURIComponent(e.id)}/edit`}
+          >
+            {t("expense.edit")}
+          </a>
+          <button type="button" class="button small danger" disabled={busy || fixed} onClick={remove}>
+            {t("expense.delete")}
+          </button>
+        </div>
       </details>
     </li>
   );
@@ -216,39 +306,86 @@ function ExpenseRow({ expense: e, group, me }: { expense: Expense; group: GroupD
 
 export function NewExpense() {
   const { params } = useRoute();
-  return <RequireUser>{(me) => <NewExpenseLoader key={params.id} id={params.id!} me={me} />}</RequireUser>;
+  return (
+    <RequireUser>{(me) => <ExpenseLoader key={params.id} id={params.id!} expenseId={null} me={me} />}</RequireUser>
+  );
 }
 
-function NewExpenseLoader({ id, me }: { id: string; me: User }) {
+export function EditExpense() {
+  const { params } = useRoute();
+  return (
+    <RequireUser>
+      {(me) => (
+        <ExpenseLoader key={`${params.id}/${params.expenseId}`} id={params.id!} expenseId={params.expenseId!} me={me} />
+      )}
+    </RequireUser>
+  );
+}
+
+/** Loads the group (and, to edit one, the expense) for the form. */
+function ExpenseLoader({ id, expenseId, me }: { id: string; expenseId: string | null; me: User }) {
   const { t } = useI18n();
   const errorText = useErrorText();
   const [group, setGroup] = useState<GroupDetail | null>(null);
+  const [expense, setExpense] = useState<Expense | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const groupPath = `/api/groups/${encodeURIComponent(id)}`;
+  const expensePath = expenseId && `${groupPath}/expenses/${encodeURIComponent(expenseId)}`;
+
+  // Each load starts the form over, from what is there now.
+  const [loads, setLoads] = useState(0);
 
   useEffect(() => {
     let alive = true;
-    api<{ group: GroupDetail }>(`/api/groups/${encodeURIComponent(id)}`)
-      .then((r) => alive && setGroup(r.group))
+    // The group first, so a failure to load the expense can still link back to it.
+    api<{ group: GroupDetail }>(groupPath)
+      .then(async (g) => {
+        if (!alive) return;
+        setGroup(g.group);
+        if (expensePath) {
+          const e = await api<{ expense: Expense }>(expensePath);
+          if (alive) setExpense(e.expense);
+        }
+      })
       .catch((e) => alive && setError(e));
     return () => {
       alive = false;
     };
-  }, [id]);
+  }, [groupPath, expensePath]);
+
+  // After someone else changed the expense or the group; failing, it leaves the form as it is.
+  const reload = async () => {
+    const [g, e] = await Promise.all([
+      api<{ group: GroupDetail }>(groupPath),
+      expensePath ? api<{ expense: Expense }>(expensePath) : null,
+    ]);
+    setGroup(g.group);
+    if (e) setExpense(e.expense);
+    setLoads((n) => n + 1);
+  };
 
   if (error !== null)
     return (
       <Page>
         <ErrorMessage>{errorText(error)}</ErrorMessage>
-        <a href="/">{t("notFound.home")}</a>
+        <a href={group ? `/groups/${encodeURIComponent(group.id)}` : "/"}>{group ? group.name : t("notFound.home")}</a>
       </Page>
     );
-  if (!group)
+  if (!group || (expenseId && !expense))
     return (
       <Page>
         <Loading />
       </Page>
     );
-  return <NewExpenseForm group={group} me={me} />;
+  return <ExpenseForm key={loads} group={group} me={me} expense={expense} reload={reload} />;
+}
+
+/** Someone in the form: a member, or someone already in the expense who has since left. */
+interface Person {
+  id: string;
+  name: string;
+  deactivated: boolean;
+  left: boolean;
 }
 
 /** The methods that take a value per person, and what the form keeps typed for each, by user id. */
@@ -261,7 +398,7 @@ type Entered = Record<Exclude<SplitMethod, "equal">, Record<string, string>>;
 function readSplit(
   method: SplitMethod,
   amount: number | null,
-  members: readonly GroupMember[],
+  members: readonly { id: string }[],
   ticked: ReadonlySet<string>,
   entered: Entered,
   currency: Currency,
@@ -312,40 +449,92 @@ function readSplit(
   return { participants, params, bad, shares, error };
 }
 
-function NewExpenseForm({ group, me }: { group: GroupDetail; me: User }) {
+/** A percentage in hundredths for a form field: 3333 → "33.33", 2500 → "25". */
+const percentInput = (hundredths: number) =>
+  `${Math.floor(hundredths / 100)}${hundredths % 100 ? `.${String(hundredths % 100).padStart(2, "0")}` : ""}`;
+
+/**
+ * The form to add an expense, or with `expense`, to edit one. `reload` loads the group and the
+ * expense as they are now, after someone else changed them.
+ */
+function ExpenseForm({
+  group,
+  me,
+  expense,
+  reload,
+}: {
+  group: GroupDetail;
+  me: User;
+  expense: Expense | null;
+  reload: () => Promise<void>;
+}) {
   const { lang, t } = useI18n();
   const errorText = useErrorText();
   const { route } = useLocation();
   const back = `/groups/${encodeURIComponent(group.id)}`;
-  const [description, setDescription] = useState("");
-  const [amountText, setAmountText] = useState("");
-  const [paidBy, setPaidBy] = useState(me.id);
-  const [date, setDate] = useState(today);
-  const [method, setMethod] = useState<SplitMethod>("equal");
-  // Everyone who can still use the site, to start with: ticked for an equal split (with or without
-  // adjustments), one share each by shares.
-  const active = group.members.filter((m) => !m.deactivated).map((m) => m.id);
-  const [ticked, setTicked] = useState(() => new Set(active));
-  const [entered, setEntered] = useState<Entered>(() => ({
-    exact: {},
-    percent: {},
-    shares: Object.fromEntries(active.map((id) => [id, "1"])),
-    adjust: {},
+  // The members, then anyone in the expense who has left the group since: they stay in it as they are.
+  const people: Person[] = group.members.map((m) => ({
+    id: m.id,
+    name: m.name,
+    deactivated: m.deactivated,
+    left: false,
   }));
+  if (expense)
+    for (const p of [{ userId: expense.paidBy, name: expense.paidByName }, ...expense.shares])
+      if (!people.some((q) => q.id === p.userId))
+        people.push({ id: p.userId, name: p.name, deactivated: false, left: true });
+  // What someone who has left owes or is owed in it can't change (the server turns that down), so
+  // with them in it only the description and date can.
+  const fixedFor = people.filter((p) => p.left);
+  const locked = fixedFor.length > 0;
+  const [description, setDescription] = useState(expense?.description ?? "");
+  const [amountText, setAmountText] = useState(expense ? amountInput(expense.amount, group.currency) : "");
+  const [paidBy, setPaidBy] = useState(expense?.paidBy ?? me.id);
+  const [date, setDate] = useState(expense?.date ?? today);
+  const [method, setMethod] = useState<SplitMethod>(expense?.splitMethod ?? "equal");
+  // Adding: everyone who can still use the site, to start with: ticked for an equal split (with or
+  // without adjustments), one share each by shares. Editing: whoever is in it, and the split as it
+  // was entered.
+  const active = expense
+    ? expense.shares.map((s) => s.userId)
+    : group.members.filter((m) => !m.deactivated).map((m) => m.id);
+  const [ticked, setTicked] = useState(() => new Set(active));
+  const [entered, setEntered] = useState<Entered>(() => {
+    const all: Entered = {
+      exact: {},
+      percent: {},
+      shares: Object.fromEntries(active.map((id) => [id, "1"])),
+      adjust: {},
+    };
+    const params = expense?.splitParams;
+    if (expense && params && expense.splitMethod !== "equal") {
+      const text = (v: number) =>
+        expense.splitMethod === "percent"
+          ? percentInput(v)
+          : expense.splitMethod === "shares"
+            ? String(v)
+            : `${expense.splitMethod === "adjust" && v > 0 ? "+" : ""}${amountInput(v, group.currency)}`;
+      all[expense.splitMethod] = Object.fromEntries(Object.entries(params).map(([id, v]) => [id, text(v)]));
+    }
+    return all;
+  });
   const [checked, setChecked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
 
   const amount = parseAmount(amountText, group.currency);
-  const split = readSplit(method, amount, group.members, ticked, entered, group.currency);
+  const split = readSplit(method, amount, people, ticked, entered, group.currency);
   const money = (units: number) => formatAmount(units, group.currency, lang);
   const byTicking = method === "equal" || method === "adjust";
+  const members = group.members.map((m) => m.id);
 
-  const tick = (userId: string, on: boolean) =>
+  const tick = (userIds: string[], on: boolean) =>
     setTicked((set) => {
       const copy = new Set(set);
-      if (on) copy.add(userId);
-      else copy.delete(userId);
+      for (const id of userIds) {
+        if (on) copy.add(id);
+        else copy.delete(id);
+      }
       return copy;
     });
   const enter = (kind: keyof Entered, userId: string, text: string) =>
@@ -357,16 +546,23 @@ function NewExpenseForm({ group, me }: { group: GroupDetail; me: User }) {
     setError(null);
     if (amount === null || !split.shares) return;
     setBusy(true);
+    const fields: NewExpenseFields = {
+      description,
+      amount,
+      paidBy,
+      date,
+      splitMethod: method,
+      participants: split.participants,
+      splitParams: split.params,
+    };
+    const path = `/api/groups/${encodeURIComponent(group.id)}/expenses`;
     try {
-      await api(`/api/groups/${encodeURIComponent(group.id)}/expenses`, {
-        description,
-        amount,
-        paidBy,
-        date,
-        splitMethod: method,
-        participants: split.participants,
-        splitParams: split.params,
-      });
+      if (expense)
+        await api(`${path}/${encodeURIComponent(expense.id)}`, {
+          ...fields,
+          version: expense.version,
+        } satisfies ExpenseEdit);
+      else await api(path, fields);
       route(back, true);
     } catch (err) {
       setError(err);
@@ -395,9 +591,33 @@ function NewExpenseForm({ group, me }: { group: GroupDetail; me: User }) {
   else if (checked && split.participants.length === 0) splitProblem = t("expenseNew.pickSomeone");
   else if (split.error && !tally && (checked || method === "adjust")) splitProblem = t(`error.${split.error}`);
 
+  // Someone else changed the expense, or someone in it has left the group meanwhile.
+  const stale =
+    expense !== null &&
+    error instanceof ApiError &&
+    ["expense_changed", "former_member_involved", "not_in_group"].includes(error.code);
+  // Deleted by someone else meanwhile: nothing left to save.
+  const gone = error instanceof ApiError && error.code === "expense_not_found";
+
+  async function loadAgain() {
+    setBusy(true);
+    try {
+      await reload();
+    } catch (err) {
+      setError(err);
+      setBusy(false);
+    }
+  }
+
+  const label = (p: Person) =>
+    p.left ? `${p.name} (${t("expenseNew.leftGroup")})` : p.id === me.id ? `${p.name} (${t("group.you")})` : p.name;
+
   return (
-    <Page title={t("expenseNew.title")}>
+    <Page title={t(expense ? "expenseEdit.title" : "expenseNew.title")}>
       <p class="muted">{group.name}</p>
+      {locked && (
+        <p class="muted small">{t("expenseEdit.locked", { names: fixedFor.map((p) => p.name).join(", ") })}</p>
+      )}
       <form class="form" onSubmit={submit} noValidate>
         <label class="field">
           <span>{t("expenseNew.description")}</span>
@@ -410,6 +630,7 @@ function NewExpenseForm({ group, me }: { group: GroupDetail; me: User }) {
             onInput={(e) => setAmountText(e.currentTarget.value)}
             inputMode="decimal"
             autoComplete="off"
+            disabled={locked}
             required
           />
           {checked && amount === null && (
@@ -418,12 +639,14 @@ function NewExpenseForm({ group, me }: { group: GroupDetail; me: User }) {
         </label>
         <label class="field">
           <span>{t("expenseNew.paidBy")}</span>
-          <select value={paidBy} onChange={(e) => setPaidBy(e.currentTarget.value)}>
-            {group.members.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.id === me.id ? `${m.name} (${t("group.you")})` : m.name}
-              </option>
-            ))}
+          <select value={paidBy} onChange={(e) => setPaidBy(e.currentTarget.value)} disabled={locked}>
+            {people
+              .filter((p) => !p.left || p.id === expense?.paidBy)
+              .map((p) => (
+                <option key={p.id} value={p.id}>
+                  {label(p)}
+                </option>
+              ))}
           </select>
         </label>
         <label class="field">
@@ -432,7 +655,7 @@ function NewExpenseForm({ group, me }: { group: GroupDetail; me: User }) {
         </label>
         <label class="field">
           <span>{t("expenseNew.method")}</span>
-          <select value={method} onChange={(e) => setMethod(e.currentTarget.value as SplitMethod)}>
+          <select value={method} onChange={(e) => setMethod(e.currentTarget.value as SplitMethod)} disabled={locked}>
             {SPLIT_METHODS.map((m) => (
               <option key={m} value={m}>
                 {t(`expenseNew.method.${m}`)}
@@ -440,7 +663,7 @@ function NewExpenseForm({ group, me }: { group: GroupDetail; me: User }) {
             ))}
           </select>
         </label>
-        <fieldset class="field participants">
+        <fieldset class="field participants" disabled={locked}>
           <legend>{t(method === "equal" ? "expenseNew.split" : `expenseNew.split.${method}`)}</legend>
           {method === "adjust" ? (
             <small class="muted">{t("expenseNew.adjustHint")}</small>
@@ -451,19 +674,18 @@ function NewExpenseForm({ group, me }: { group: GroupDetail; me: User }) {
             <label class="field checkbox">
               <input
                 type="checkbox"
-                checked={split.participants.length === group.members.length}
-                onChange={(e) =>
-                  setTicked(e.currentTarget.checked ? new Set(group.members.map((m) => m.id)) : new Set())
-                }
+                checked={members.every((id) => ticked.has(id))}
+                onChange={(e) => tick(members, e.currentTarget.checked)}
               />
               <span>{t("expenseNew.everyone")}</span>
             </label>
           )}
-          {group.members.map((m) => {
+          {people.map((m) => {
             const name = (
               <span class="participant-name">
                 {m.name}
                 {m.deactivated && <span class="badge">{t("group.deactivated")}</span>}
+                {m.left && <span class="badge">{t("expenseNew.leftGroup")}</span>}
               </span>
             );
             const share = split.shares?.has(m.id) && <span class="muted small">{money(split.shares.get(m.id)!)}</span>;
@@ -487,7 +709,7 @@ function NewExpenseForm({ group, me }: { group: GroupDetail; me: User }) {
                     <input
                       type="checkbox"
                       checked={ticked.has(m.id)}
-                      onChange={(e) => tick(m.id, e.currentTarget.checked)}
+                      onChange={(e) => tick([m.id], e.currentTarget.checked)}
                     />
                     {name}
                   </label>
@@ -504,9 +726,15 @@ function NewExpenseForm({ group, me }: { group: GroupDetail; me: User }) {
         </fieldset>
         {error !== null && <ErrorMessage>{errorText(error)}</ErrorMessage>}
         <div class="actions">
-          <button type="submit" class="button" disabled={busy}>
-            {t("expenseNew.submit")}
-          </button>
+          {gone ? null : stale ? (
+            <button type="button" class="button" disabled={busy} onClick={loadAgain}>
+              {t("expenseEdit.reload")}
+            </button>
+          ) : (
+            <button type="submit" class="button" disabled={busy}>
+              {t("expenseNew.submit")}
+            </button>
+          )}
           <a class="button secondary" href={back}>
             {t("expenseNew.cancel")}
           </a>

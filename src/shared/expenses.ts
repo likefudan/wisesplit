@@ -43,6 +43,10 @@ export interface Expense {
   shares: Share[];
   createdBy: string;
   createdAt: string;
+  /** When it was last edited; null if never. */
+  updatedAt: string | null;
+  /** Goes up by one with every edit; an edit names the version it started from. */
+  version: number;
 }
 
 /** What POST /api/groups/:id/expenses takes. */
@@ -56,6 +60,12 @@ export interface NewExpense {
   participants: string[];
   /** The split as entered, by user id; see `SplitParams`. Left out (or null) for an equal split. */
   splitParams?: SplitParams | null;
+}
+
+/** What POST /api/groups/:id/expenses/:expenseId takes: the whole expense again, as edited. */
+export interface ExpenseEdit extends NewExpense {
+  /** The version the edit started from (`Expense.version`). */
+  version: number;
 }
 
 export interface ExpensePage {
@@ -187,4 +197,14 @@ export function spread(amount: number, weights: readonly number[], userIds: read
     left--;
   }
   return new Map(parts.map((p) => [p.id, p.units]));
+}
+
+/**
+ * What an expense does to each person's balance: what they paid minus their share, by user id.
+ * `shares` by user id, as the activity log keeps them.
+ */
+export function netOf(e: { paidBy: string; amount: number; shares: Record<string, number> }): Map<string, number> {
+  const net = new Map<string, number>([[e.paidBy, e.amount]]);
+  for (const [id, units] of Object.entries(e.shares)) net.set(id, (net.get(id) ?? 0) - units);
+  return net;
 }
