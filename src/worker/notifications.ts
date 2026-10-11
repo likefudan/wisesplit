@@ -9,7 +9,7 @@ import {
   type PaymentNote,
   UNREAD_MAX,
 } from "../shared/notifications";
-import { canEmail, notificationEmail, sendEmails } from "./email";
+import { canEmail, EMAILS_PER_DAY, notificationEmail, SIGNUP_RESERVE, sendEmails } from "./email";
 import type { Env } from "./env";
 import { HttpError, now } from "./http";
 import { randomId } from "./lib/crypto";
@@ -155,22 +155,22 @@ async function tellInApp(env: Env, event: NotifyEvent, notes: Note[]): Promise<v
 async function email(env: Env, event: NotifyEvent, notes: Note[]): Promise<void> {
   try {
     const groupId = groupOf(event);
-    const { results: people } = await env.DB.prepare(
-      `SELECT u.id, u.email, u.lang FROM users u
-       WHERE u.id IN (SELECT value FROM json_each(?)) AND u.status = ?
-         AND (? IS NULL OR EXISTS (SELECT 1 FROM group_members m WHERE m.group_id = ? AND m.user_id = u.id))
-         AND NOT EXISTS (SELECT 1 FROM notification_prefs p WHERE p.user_id = u.id AND p.email = 0)`,
-    )
-      .bind(
-        JSON.stringify(notes.map((n) => n.userId)),
-        event.kind === "signup.rejected" ? "rejected" : "approved",
-        groupId,
-        groupId,
+    const byUser = new Map(notes.map((n) => [n.userId, { ...n, actorId: event.actorId }]));
+    const ids = [...new Set([...byUser.values()].flatMap(mentioned))];
+    const [{ results: people }, group, { results: users }] = await Promise.all([
+      env.DB.prepare(
+        `SELECT u.id, u.email, u.lang FROM users u
+         WHERE u.id IN (SELECT value FROM json_each(?)) AND u.status = ?
+           AND (? IS NULL OR EXISTS (SELECT 1 FROM group_members m WHERE m.group_id = ? AND m.user_id = u.id))
+           AND NOT EXISTS (SELECT 1 FROM notification_prefs p WHERE p.user_id = u.id AND p.email = 0)`,
       )
-      .all<{ id: string; email: string; lang: Lang }>();
-    if (!people.length) return;
-    const ids = [...new Set(notes.flatMap((n) => mentioned({ ...n, actorId: event.actorId })))];
-    const [group, { results: users }] = await Promise.all([
+        .bind(
+          JSON.stringify([...byUser.keys()]),
+          event.kind === "signup.rejected" ? "rejected" : "approved",
+          groupId,
+          groupId,
+        )
+        .all<{ id: string; email: string; lang: Lang }>(),
       groupId
         ? env.DB.prepare("SELECT id, name, currency FROM groups WHERE id = ?")
             .bind(groupId)
@@ -181,13 +181,14 @@ async function email(env: Env, event: NotifyEvent, notes: Note[]): Promise<void>
         .all<{ id: string; name: string }>(),
     ]);
     // The group was deleted in the meantime: there is nothing left to point to.
-    if (groupId && !group) return;
+    if (!people.length || (groupId && !group)) return;
     const names = Object.fromEntries(users.map((u) => [u.id, u.name]));
     const emails = people.flatMap((person) => {
-      const note = notes.find((n) => n.userId === person.id)!;
-      return notificationEmail(env, person, { ...note, actorId: event.actorId }, group, names) ?? [];
+      const note = byUser.get(person.id);
+      return (note && notificationEmail(env, person, note, group, names)) ?? [];
     });
-    await sendEmails(env, emails);
+    const signup = event.kind === "signup.approved" || event.kind === "signup.rejected";
+    await sendEmails(env, emails, signup ? EMAILS_PER_DAY : EMAILS_PER_DAY - SIGNUP_RESERVE);
   } catch (err) {
     console.error("emailing failed:", event.kind, err);
   }

@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import { formatAmount } from "../../shared/money";
 import {
   type AppNotification,
   type NotificationPage,
@@ -155,12 +154,8 @@ function NotificationRow({
   onOpen: () => void;
 }) {
   const { lang, t } = useI18n();
-  const name = (id: string | null | undefined) =>
-    id === me.id ? t("notifications.you") : (id && names[id]) || t("activity.someone");
-  const money = (units: number | undefined) =>
-    units === undefined ? "—" : n.group ? formatAmount(units, n.group.currency, lang) : String(units);
   // A sign-up rejection is never under the bell: only approved users can see it.
-  const said = n.kind === "signup.rejected" ? null : notificationText(n, lang, name, money);
+  const said = n.kind === "signup.rejected" ? null : notificationText(n, lang, me.id, names, n.group?.currency ?? null);
   if (!said) return null;
   const { text, detail } = said;
   const href = n.group ? `/groups/${encodeURIComponent(n.group.id)}` : "/";

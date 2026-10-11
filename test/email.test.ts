@@ -1,10 +1,16 @@
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { notificationEmail } from "../src/worker/email";
+import { EMAILS_PER_DAY, notificationEmail, SIGNUP_RESERVE } from "../src/worker/email";
+import { now } from "../src/worker/http";
+import { notify } from "../src/worker/notifications";
 import type { Env } from "../src/worker/env";
 import { admin, json, makeUser, ORIGIN, send } from "./helpers";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(async () => {
+  vi.restoreAllMocks();
+  // Each test starts with the whole day's allowance.
+  await env.DB.prepare("DELETE FROM email_days").run();
+});
 
 /** A site that can send email. */
 const MAIL: Partial<Env> = { RESEND_API_KEY: "re_test", EMAIL_FROM: "wisesplit <notify@llmat.dev>" };
@@ -51,7 +57,9 @@ function mockResend(answer: () => Promise<Response> = async () => Response.json(
   const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = input instanceof Request ? input.url : String(input);
     if (url !== "https://api.resend.com/emails/batch") throw new Error(`unexpected fetch ${url}`);
-    expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer re_test");
+    const headers = new Headers(init?.headers);
+    expect(headers.get("Authorization")).toBe("Bearer re_test");
+    expect(headers.get("x-batch-validation")).toBe("permissive");
     sent.push(...JSON.parse(String(init?.body)));
     return answer();
   });
@@ -175,6 +183,58 @@ describe("email notifications", () => {
     expect(second.status).toBe(200);
     expect(errors).toHaveBeenCalledWith("emails not sent:", expect.any(TypeError));
     expect(await kindsOf(bob)).toEqual(["expense.added", "expense.added"]);
+  });
+
+  it("keeps within the day's allowance, holding some back for sign-up answers", async () => {
+    const ann = await person("Ann");
+    const bob = await person("Bob");
+    const cat = await person("Cat");
+    const id = await makeGroup([ann, bob, cat]);
+    const { sent } = mockResend();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const today = now().slice(0, 10);
+    const used = async () =>
+      (await env.DB.prepare("SELECT count FROM email_days WHERE day = ?").bind(today).first<{ count: number }>())
+        ?.count;
+
+    await post(`/api/groups/${id}/expenses`, ann.cookie, expenseBody(ann, 3000, [ann, bob, cat]));
+    expect(sent).toHaveLength(2);
+    expect(await used()).toBe(2);
+
+    // One short of the group allowance: an expense for two more is not emailed at all.
+    await env.DB.prepare("UPDATE email_days SET count = ? WHERE day = ?")
+      .bind(EMAILS_PER_DAY - SIGNUP_RESERVE - 1, today)
+      .run();
+    const res = await post(`/api/groups/${id}/expenses`, ann.cookie, expenseBody(ann, 3000, [ann, bob, cat]));
+    expect(res.status).toBe(200);
+    expect(sent).toHaveLength(2);
+    expect(warn).toHaveBeenCalledWith("daily email limit reached; 2 not sent");
+    expect(await kindsOf(bob)).toEqual(["expense.added", "expense.added"]);
+
+    // A sign-up answer may still use what was held back.
+    const boss = await admin();
+    const applicant = await person("Dee", "en", "pending");
+    await post(`/api/admin/users/${applicant.id}/approve`, boss.cookie);
+    expect(sent.at(-1)!.to).toEqual([applicant.email]);
+    expect(await used()).toBe(EMAILS_PER_DAY - SIGNUP_RESERVE);
+  });
+
+  it("sends after the response when the request allows it", async () => {
+    const ann = await person("Ann");
+    const bob = await person("Bob");
+    const id = await makeGroup([ann, bob]);
+    const { sent } = mockResend();
+    const later: Promise<unknown>[] = [];
+    await notify(
+      { ...env, ...MAIL },
+      { kind: "member.added", actorId: ann.id, groupId: id, userId: bob.id },
+      { waitUntil: (p) => later.push(p) },
+    );
+    expect(later).toHaveLength(1);
+    // Under the bell at once; the email when the deferred work finishes.
+    expect(await kindsOf(bob)).toEqual(["member.added"]);
+    await Promise.all(later);
+    expect(sent.map((m) => m.to[0])).toEqual([bob.email]);
   });
 
   it("sends nothing without Resend set up, or to an address that can't get mail", async () => {

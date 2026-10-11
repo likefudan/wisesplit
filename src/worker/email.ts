@@ -1,8 +1,8 @@
 import type { Currency } from "../shared/currencies";
 import { type Lang, translate } from "../shared/i18n";
-import { formatAmount } from "../shared/money";
 import { type AppNotification, notificationText } from "../shared/notifications";
 import { type Env, isStaging } from "./env";
+import { now } from "./http";
 
 /** One email to one person. */
 export interface Email {
@@ -18,28 +18,59 @@ export const canEmail = (env: Env) => !!(env.RESEND_API_KEY && env.EMAIL_FROM);
 // Addresses that can't receive mail (RFC 2606: the test logins use them); sending would only bounce.
 const UNDELIVERABLE = /(^|\.)(example\.(com|net|org)|example|test|invalid|localhost)$/i;
 
+/** Emails a day that Resend's free tier sends. */
+export const EMAILS_PER_DAY = 100;
+
+/** Of those, kept for answers to sign-ups: a rejected applicant can be told no other way. */
+export const SIGNUP_RESERVE = 10;
+
 /**
- * Sends `emails` through Resend, in one request: its free tier allows only a couple of requests a
- * second (and 100 emails a day). How many were accepted; a refusal is logged, never thrown, and so
- * is a network failure. Addresses that can't get mail are left out.
+ * Sends `emails` through Resend in one request (its free tier allows only a couple of requests a
+ * second), if today's count stays within `limit` (EMAILS_PER_DAY, or less to keep some for later).
+ * How many Resend accepted. A refusal or failure is logged, never thrown. Addresses that can't get
+ * mail are left out.
  */
-export async function sendEmails(env: Env, emails: Email[]): Promise<number> {
+export async function sendEmails(env: Env, emails: Email[], limit: number): Promise<number> {
   const deliverable = emails.filter((e) => !UNDELIVERABLE.test(e.to.split("@").pop() ?? ""));
   if (!canEmail(env) || !deliverable.length) return 0;
+  const n = deliverable.length;
   try {
+    // Counted before sending, in the statement that checks the limit, so emails sent at the same
+    // moment can't both slip under it. A failed send still counts: Resend may have counted it too.
+    const room = await env.DB.prepare(
+      `INSERT INTO email_days (day, count) SELECT ?, ? WHERE ? <= ?
+       ON CONFLICT (day) DO UPDATE SET count = count + excluded.count WHERE count + excluded.count <= ?
+       RETURNING count`,
+    )
+      .bind(now().slice(0, 10), n, n, limit, limit)
+      .first();
+    if (!room) {
+      console.warn(`daily email limit reached; ${n} not sent`);
+      return 0;
+    }
     const res = await fetch("https://api.resend.com/emails/batch", {
       method: "POST",
-      headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${env.RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+        // An address Resend refuses fails only its own email, not the whole batch.
+        "x-batch-validation": "permissive",
+      },
       body: JSON.stringify(
         deliverable.map((e) => ({ from: env.EMAIL_FROM, to: [e.to], subject: e.subject, text: e.text, html: e.html })),
       ),
     });
-    if (res.ok) return deliverable.length;
-    console.error("emails not sent:", res.status, (await res.text()).slice(0, 500));
+    if (!res.ok) {
+      console.error("emails not sent:", res.status, (await res.text()).slice(0, 500));
+      return 0;
+    }
+    const { errors } = (await res.json().catch(() => ({}))) as { errors?: unknown[] };
+    if (errors?.length) console.error("some emails not sent:", JSON.stringify(errors).slice(0, 500));
+    return n - (errors?.length ?? 0);
   } catch (err) {
     console.error("emails not sent:", err);
+    return 0;
   }
-  return 0;
 }
 
 const escapeHtml = (s: string) =>
@@ -65,20 +96,20 @@ export function notificationEmail(
 ): Email | null {
   const { lang } = to;
   const t = (key: Parameters<typeof translate>[1], params?: Record<string, string>) => translate(lang, key, params);
-  const name = (id: string | null | undefined) =>
-    id === to.id ? t("notifications.you") : (id && names[id]) || t("activity.someone");
-  const money = (units: number | undefined) =>
-    units === undefined ? "—" : group ? formatAmount(units, group.currency, lang) : String(units);
-  const said = notificationText(n, lang, name, money);
+  const said = notificationText(n, lang, to.id, names, group?.currency ?? null);
   if (!said) return null;
 
   const origin = env.SITE_ORIGIN.replace(/\/$/, "");
   const rejected = n.kind === "signup.rejected";
   const link = group ? `${origin}/groups/${encodeURIComponent(group.id)}` : `${origin}/`;
   const settings = `${origin}/notifications/settings`;
-  const subject = `${isStaging(env) ? `${t("email.staging")} ` : ""}${group ? `${group.name}: ` : ""}${said.text}`
-    .replace(/\s+/g, " ")
-    .slice(0, 200);
+  const heading =
+    `${isStaging(env) ? `${t("email.staging")} ` : ""}${group ? `${group.name}: ` : ""}${said.text}`.replace(
+      /\s+/g,
+      " ",
+    );
+  // Cut by character, never through the middle of an emoji.
+  const subject = Array.from(heading).slice(0, 200).join("");
 
   const text = [
     group?.name,

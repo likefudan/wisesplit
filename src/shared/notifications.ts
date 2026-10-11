@@ -2,6 +2,7 @@
 
 import type { Currency } from "./currencies";
 import { type Lang, type MessageKey, translate } from "./i18n";
+import { formatAmount } from "./money";
 import type { PaymentMethod } from "./settlements";
 
 /** Notifications per page of the list. */
@@ -79,17 +80,22 @@ export interface NotificationText {
 }
 
 /**
- * What `n` says to its reader in `lang`, for the list under the bell and for emails. `name` gives
- * the name of a user id as the reader sees it ("you" for themselves), `money` an amount in the
- * group's currency. Null for a kind this version has no words for.
+ * What `n` says to its reader (`readerId`) in `lang`, for the list under the bell and for emails.
+ * `names` has the name of everyone it mentions, by user id; amounts are in `currency`, the group's.
+ * Null for a kind this version has no words for.
  */
 export function notificationText(
   n: Pick<AppNotification, "kind" | "data" | "actorId">,
   lang: Lang,
-  name: (id: string | null | undefined) => string,
-  money: (units: number | undefined) => string,
+  readerId: string,
+  names: Record<string, string>,
+  currency: Currency | null,
 ): NotificationText | null {
   const t = (key: MessageKey, params?: Record<string, string>) => translate(lang, key, params);
+  const name = (id: string | null | undefined) =>
+    id === readerId ? t("notifications.you") : (id && names[id]) || t("activity.someone");
+  const money = (units: number | undefined) =>
+    units === undefined ? "—" : currency ? formatAmount(units, currency, lang) : String(units);
   const actor = name(n.actorId);
   const note = n as NotificationData;
   switch (note.kind) {
