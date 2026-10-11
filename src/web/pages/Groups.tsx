@@ -2,7 +2,7 @@ import { useLocation, useRoute } from "preact-iso";
 import { useEffect, useState } from "preact/hooks";
 import { CURRENCY_CODES, type Currency } from "../../shared/currencies";
 import { type GroupDetail, type GroupMember, type GroupSummary, INVITE_DAYS } from "../../shared/groups";
-import { ApiError, api } from "../api";
+import { ApiError, api, apiDownload } from "../api";
 import { Avatar, ErrorMessage, Loading, Page, useErrorText } from "../components";
 import { currencyLabel, formatDate } from "../format";
 import { useI18n } from "../i18n";
@@ -259,6 +259,7 @@ function GroupView({ id, me }: { id: string; me: User }) {
       <InviteLink path={path} onError={lost} />
 
       <ActivityList group={group} refresh={refresh} />
+      <Export path={path} onError={lost} />
 
       <section>
         {isOwner ? (
@@ -275,6 +276,41 @@ function GroupView({ id, me }: { id: string; me: User }) {
         )}
       </section>
     </Page>
+  );
+}
+
+/** Downloads the group's records as CSV, headed in the page's language and dated in this browser's time zone. */
+function Export({ path, onError }: { path: string; onError: (err: unknown) => void }) {
+  const { lang, t } = useI18n();
+  const errorText = useErrorText();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  async function download() {
+    const params = new URLSearchParams({ lang });
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (tz) params.set("tz", tz);
+    setBusy(true);
+    setError(null);
+    try {
+      await apiDownload(`${path}/export.csv?${params}`);
+    } catch (err) {
+      setError(err);
+      onError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section>
+      <h2>{t("export.title")}</h2>
+      <p class="muted small">{t("export.hint")}</p>
+      {error !== null && <ErrorMessage>{errorText(error)}</ErrorMessage>}
+      <button type="button" class="button secondary" disabled={busy} onClick={download}>
+        {t("export.download")}
+      </button>
+    </section>
   );
 }
 
