@@ -14,6 +14,7 @@ import {
   unsettledArgs,
 } from "../groups";
 import { expenseRoutes } from "./expenses";
+import { exportRoutes } from "./export";
 import { settlementRoutes } from "./settlements";
 import { receiptRoutes } from "./receipts";
 import type { Env } from "../env";
@@ -30,6 +31,8 @@ groupRoutes.route("/:id", expenseRoutes);
 groupRoutes.route("/:id", settlementRoutes);
 // Receipt photos: /:id/expenses/:expenseId/receipt.
 groupRoutes.route("/:id", receiptRoutes);
+// The group's records as a CSV file: /:id/export.csv.
+groupRoutes.route("/:id", exportRoutes);
 
 const notSettled = () => new HttpError(409, "group_not_settled", "Everyone in the group must be settled up first");
 const userNotFound = () => new HttpError(404, "user_not_found", "No approved user has this email");
