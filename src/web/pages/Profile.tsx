@@ -74,6 +74,9 @@ function ProfileForm({ user }: { user: User }) {
             ))}
           </select>
         </label>
+        <p>
+          <a href="/notifications/settings">{t("notifications.settings")}</a>
+        </p>
         {message &&
           (message.ok ? (
             <p class="success" role="status">

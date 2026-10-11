@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { ADMIN_ACTIONS, type AdminAction, USER_STATUSES, type UserStatus } from "../../shared/users";
 import { type AppEnv, isAdminEmail, requireAdmin, type UserRow } from "../auth";
 import { HttpError, now, readJson } from "../http";
+import { notify } from "../notifications";
 import { getSettings, updateSettings } from "../settings";
 import { publicUser } from "../users";
 
@@ -54,6 +55,12 @@ adminRoutes.post("/users/:id/:action", async (c) => {
     .bind(action.to, now(), admin.id, id, target.email, ...action.from)
     .first<UserRow>();
   if (!updated) throw new HttpError(409, "wrong_status", "The user's status has changed; reload the list");
+  if (name === "approve" || name === "reject")
+    await notify(c.env, {
+      kind: name === "approve" ? "signup.approved" : "signup.rejected",
+      actorId: admin.id,
+      userId: id,
+    });
   return c.json({ user: publicUser(c.env, updated) });
 });
 

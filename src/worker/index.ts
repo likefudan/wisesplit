@@ -2,12 +2,14 @@ import { Hono } from "hono";
 import { SECURITY_HEADERS } from "../shared/security";
 import { type Env, isStaging } from "./env";
 import { HttpError } from "./http";
+import { cleanUpNotifications } from "./notifications";
 import { cleanUpReceipts } from "./receipts";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
 import { groupRoutes } from "./routes/groups";
 import { inviteRoutes } from "./routes/invites";
 import { meRoutes } from "./routes/me";
+import { notificationRoutes } from "./routes/notifications";
 import { testLoginRoutes } from "./routes/testLogin";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -36,6 +38,7 @@ app.route("/api/me", meRoutes);
 app.route("/api/admin", adminRoutes);
 app.route("/api/groups", groupRoutes);
 app.route("/api/invites", inviteRoutes);
+app.route("/api/notifications", notificationRoutes);
 app.route("/api/test", testLoginRoutes);
 
 // Proves the Worker is up and can reach its database.
@@ -81,9 +84,13 @@ app.onError((err, c) => {
 
 export default {
   fetch: app.fetch,
-  // Daily (wrangler.jsonc "triggers"): removes receipt photos no expense uses any more.
+  // Daily (wrangler.jsonc "triggers"): removes receipt photos no expense uses any more, and old
+  // notifications.
   async scheduled(_controller, env) {
-    const removed = await cleanUpReceipts(env);
-    if (removed) console.log(`removed ${removed} unused receipt photos`);
+    // Each runs even if the other fails; a failure still fails the run, so it shows in the logs.
+    const [photos, notes] = await Promise.allSettled([cleanUpReceipts(env), cleanUpNotifications(env)]);
+    if (photos.status === "fulfilled" && photos.value) console.log(`removed ${photos.value} unused receipt photos`);
+    if (notes.status === "fulfilled" && notes.value) console.log(`removed ${notes.value} old notifications`);
+    for (const r of [photos, notes]) if (r.status === "rejected") throw r.reason;
   },
 } satisfies ExportedHandler<Env>;

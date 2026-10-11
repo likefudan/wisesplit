@@ -71,6 +71,12 @@ curl -i -X POST http://localhost:8787/api/test/login -H 'Origin: http://localhos
 - Photos live in an R2 bucket (binding `RECEIPTS`: `wisesplit-receipts`, and `wisesplit-staging-receipts` for the test site) and are served only through the Worker, to the group's members (`src/worker/routes/receipts.ts`). Any member may add, replace or remove one; each change goes into `activity_log` (`receipt.added`, `receipt.replaced`, `receipt.removed`).
 - A `receipts` row ties a photo to its expense. Deleting a group deletes its photos straight away; anything else left in the bucket without a row (a failed upload, a deleted expense) is removed by a daily cron run of the Worker (`cleanUpReceipts`). Locally, `curl "http://localhost:8787/cdn-cgi/local/scheduled"` runs it by hand.
 
+### Notifications
+
+- `notify` in `src/worker/notifications.ts` is the one place that tells people about things: a route that did something passes it the event (an expense added, edited or deleted; a payment recorded, confirmed, declined or withdrawn; someone added to a group; a sign-up approved or rejected), and it works out who to tell (everyone the expense or payment involves, never whoever did it) and what each of them reads (their own share of an expense, before and after an edit). Email and push will go out from there too.
+- For now that means a `notifications` row per person, shown under the bell in the header (`/notifications`), which asks for the unread count every minute while the page is in view. Only approved users who are still in the group are told, and not those who turned notifications off on the settings page (`notification_prefs`). A failure is logged and never undoes or blocks what was done.
+- Notifications go with their group when it is deleted, and after 180 days in the same daily cron run (`cleanUpNotifications`).
+
 ### Languages
 
 Every string on the pages comes from `src/shared/i18n.ts`, which holds an English and a Chinese table with the same keys. Add both when adding a message; the type checker catches a missing Chinese entry and `test/i18n.test.ts` checks the `{placeholders}` match. The chosen language is remembered in the browser; a first visit follows the browser's preferred language.
