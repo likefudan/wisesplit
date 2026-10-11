@@ -53,7 +53,7 @@ expenseRoutes.post("/expenses", async (c) => {
     c.env.DB.prepare(
       `INSERT INTO expenses (id, group_id, description, amount, paid_by, date, split_method, split_params,
          created_by, created_at)
-       SELECT ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
        WHERE (SELECT COUNT(*) FROM group_members WHERE group_id = ? AND user_id IN (SELECT value FROM json_each(?))) = ?
        RETURNING id`,
     ).bind(
@@ -64,6 +64,7 @@ expenseRoutes.post("/expenses", async (c) => {
       e.paidBy,
       e.date,
       e.splitMethod,
+      e.splitParams === null ? null : JSON.stringify(e.splitParams),
       me.id,
       at,
       group.id,
@@ -194,12 +195,22 @@ expenseRoutes.post("/expenses/:expenseId", async (c) => {
       `INSERT INTO activity_log (id, group_id, actor_id, action, subject_id, data, created_at)
        SELECT ?, ?, ?, 'expense.edited', ?, ?, ? WHERE ${UNCHANGED_SQL}`,
     ).bind(randomId(), group.id, me.id, id, JSON.stringify(change), at, ...args),
-    // split_params: NULL while equal is the only split (PR 4 stores the others' here, as on adding).
     c.env.DB.prepare(
-      `UPDATE expenses SET description = ?, amount = ?, paid_by = ?, date = ?, split_method = ?, split_params = NULL,
+      `UPDATE expenses SET description = ?, amount = ?, paid_by = ?, date = ?, split_method = ?, split_params = ?,
          version = version + 1, updated_at = ?, updated_by = ?
        WHERE id = ? AND ${UNCHANGED_SQL} RETURNING id`,
-    ).bind(e.description, e.amount, e.paidBy, e.date, e.splitMethod, at, me.id, id, ...args),
+    ).bind(
+      e.description,
+      e.amount,
+      e.paidBy,
+      e.date,
+      e.splitMethod,
+      e.splitParams === null ? null : JSON.stringify(e.splitParams),
+      at,
+      me.id,
+      id,
+      ...args,
+    ),
   ]);
   if (!results.at(-1)?.results.length) await whyNot(c.env, group.id, me.id, id, version, people, before);
   return c.json({ expense: await expenseById(c.env, group.id, id) });

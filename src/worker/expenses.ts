@@ -6,8 +6,10 @@ import {
   type NewExpense,
   type Share,
   SPLIT_METHODS,
+  SplitError,
+  type SplitParams,
   isSplitMethod,
-  splitEqual,
+  splitShares,
 } from "../shared/expenses";
 import { MAX_AMOUNT } from "../shared/money";
 import type { Env } from "./env";
@@ -46,11 +48,22 @@ export function parseDay(value: unknown): string {
   return value as string;
 }
 
+/** What the API says for each way a split can fail. */
+const SPLIT_ERRORS: Record<SplitError["code"], string> = {
+  invalid_split: "The split doesn't fit its method: see SplitParams in src/shared/expenses.ts",
+  split_exact_total: "The exact amounts must add up to the total",
+  split_percent_total: "The percentages must add up to 100%",
+  split_adjust_too_large: "The adjustments add up to more than the total",
+  split_adjust_negative: "An adjustment leaves someone paying less than nothing",
+};
+
 /**
  * The expense in a request body, checked on its own; whether the people in it are in the group is
  * checked as it is added. Each person's share is worked out here, from the split.
  */
-export function parseNewExpense(body: Record<string, unknown>): NewExpense & { shares: Map<string, number> } {
+export function parseNewExpense(
+  body: Record<string, unknown>,
+): NewExpense & { splitParams: SplitParams | null; shares: Map<string, number> } {
   const description = parseDescription(body.description);
   const amount = parseAmountUnits(body.amount);
   const paidBy = typeof body.paidBy === "string" && body.paidBy ? body.paidBy : null;
@@ -67,6 +80,17 @@ export function parseNewExpense(body: Record<string, unknown>): NewExpense & { s
     new Set(participants).size !== participants.length
   )
     throw new HttpError(400, "invalid_participants", "Pick who shares the expense, each person once");
+  const params = body.splitParams ?? null;
+  if (params !== null && (typeof params !== "object" || Array.isArray(params)))
+    throw new HttpError(400, "invalid_split", SPLIT_ERRORS.invalid_split);
+  const splitParams = params as SplitParams | null;
+  let shares: Map<string, number>;
+  try {
+    shares = splitShares(body.splitMethod, amount, participants, splitParams);
+  } catch (err) {
+    if (err instanceof SplitError) throw new HttpError(400, err.code, SPLIT_ERRORS[err.code]);
+    throw err;
+  }
   return {
     description,
     amount,
@@ -74,7 +98,8 @@ export function parseNewExpense(body: Record<string, unknown>): NewExpense & { s
     date,
     splitMethod: body.splitMethod,
     participants,
-    shares: splitEqual(amount, participants),
+    splitParams: body.splitMethod === "equal" ? null : splitParams,
+    shares,
   };
 }
 
@@ -86,6 +111,7 @@ interface ExpenseRow {
   paid_by_name: string;
   date: string;
   split_method: Expense["splitMethod"];
+  split_params: string | null;
   created_by: string;
   created_at: string;
   updated_at: string | null;
@@ -94,7 +120,7 @@ interface ExpenseRow {
 }
 
 const EXPENSE_SELECT = `SELECT e.id, e.description, e.amount, e.paid_by, p.name AS paid_by_name, e.date,
-    e.split_method, e.created_by, e.created_at, e.updated_at, e.version,
+    e.split_method, e.split_params, e.created_by, e.created_at, e.updated_at, e.version,
     (SELECT json_group_array(json_object('userId', s.user_id, 'name', u.name, 'amount', s.amount))
       FROM expense_shares s JOIN users u ON u.id = s.user_id WHERE s.expense_id = e.id) AS shares
   FROM expenses e JOIN users p ON p.id = e.paid_by`;
@@ -109,6 +135,7 @@ const toExpense = (r: ExpenseRow): Expense => ({
   paidByName: r.paid_by_name,
   date: r.date,
   splitMethod: r.split_method,
+  splitParams: r.split_params === null ? null : (JSON.parse(r.split_params) as SplitParams),
   shares: (JSON.parse(r.shares) as Share[]).sort((a, b) => (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0)),
   createdBy: r.created_by,
   createdAt: r.created_at,
@@ -188,6 +215,7 @@ export const snapshot = (e: {
   paidBy: string;
   date: string;
   splitMethod: Expense["splitMethod"];
+  splitParams: SplitParams | null;
   shares: Share[] | Map<string, number>;
 }): ExpenseSnapshot => ({
   description: e.description,
@@ -195,17 +223,23 @@ export const snapshot = (e: {
   paidBy: e.paidBy,
   date: e.date,
   splitMethod: e.splitMethod,
+  splitParams: e.splitParams,
   shares: Object.fromEntries(e.shares instanceof Map ? e.shares : e.shares.map((s) => [s.userId, s.amount])),
 });
 
-const sameShares = (a: Record<string, number>, b: Record<string, number>) =>
-  Object.keys(a).length === Object.keys(b).length && Object.entries(a).every(([id, units]) => b[id] === units);
+/** Two maps of numbers by user id (shares, or a split's parameters) are the same; null is none. */
+const sameById = (a: Record<string, number> | null | undefined, b: Record<string, number> | null | undefined) => {
+  const x = a ?? {};
+  const y = b ?? {};
+  return Object.keys(x).length === Object.keys(y).length && Object.entries(x).every(([id, v]) => y[id] === v);
+};
 
 /** What an edit changes, field by field; null if nothing. */
 export function changeOf(before: ExpenseSnapshot, after: ExpenseSnapshot): ExpenseChange | null {
   const change: ExpenseChange = { description: after.description, before: {}, after: {} };
   for (const key of Object.keys(after) as (keyof ExpenseSnapshot)[]) {
-    const same = key === "shares" ? sameShares(before.shares, after.shares) : before[key] === after[key];
+    const same =
+      key === "shares" || key === "splitParams" ? sameById(before[key], after[key]) : before[key] === after[key];
     if (!same) {
       (change.before as Record<string, unknown>)[key] = before[key];
       (change.after as Record<string, unknown>)[key] = after[key];

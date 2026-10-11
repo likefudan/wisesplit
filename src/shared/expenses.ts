@@ -1,3 +1,5 @@
+import { MAX_AMOUNT } from "./money";
+
 /** Expenses and balances, as the API shows them (src/worker/routes/expenses.ts). */
 
 export const DESCRIPTION_MAX = 100;
@@ -6,10 +8,14 @@ export const DESCRIPTION_MAX = 100;
 export const EXPENSES_PAGE = 20;
 
 /**
- * Ways to split an expense. Only "equal" exists so far; the others come with their forms (PR 4),
- * and the database already accepts them so that needs no migration.
+ * Ways to split an expense:
+ * - equal: everyone taking part pays the same;
+ * - exact: each person's amount is given, and they add up to the total;
+ * - percent: each person's percentage is given, and they add up to 100%;
+ * - shares: each person counts for a whole number of shares (2 pays twice what 1 does);
+ * - adjust: everyone pays the same, except some pay a fixed amount more (or less) than the rest.
  */
-export const SPLIT_METHODS = ["equal"] as const;
+export const SPLIT_METHODS = ["equal", "exact", "percent", "shares", "adjust"] as const;
 export type SplitMethod = (typeof SPLIT_METHODS)[number];
 
 export const isSplitMethod = (v: unknown): v is SplitMethod =>
@@ -32,6 +38,7 @@ export interface Expense {
   /** The day it happened, YYYY-MM-DD, as the person entering it chose. */
   date: string;
   splitMethod: SplitMethod;
+  splitParams: SplitParams | null;
   /** Everyone sharing it, by user id; the amounts add up to `amount`. */
   shares: Share[];
   createdBy: string;
@@ -49,7 +56,10 @@ export interface NewExpense {
   paidBy: string;
   date: string;
   splitMethod: SplitMethod;
+  /** Everyone sharing it, by user id. */
   participants: string[];
+  /** The split as entered, by user id; see `SplitParams`. Left out (or null) for an equal split. */
+  splitParams?: SplitParams | null;
 }
 
 /** What POST /api/groups/:id/expenses/:expenseId takes: the whole expense again, as edited. */
@@ -72,6 +82,86 @@ export interface Balance {
   userId: string;
   name: string;
   net: number;
+}
+
+/**
+ * What a split takes beyond who shares it, by user id, as entered:
+ * - exact: each person's amount, in smallest units (≥ 1);
+ * - percent: each person's percentage in hundredths of a percent (3333 is 33.33%; ≥ 1);
+ * - shares: each person's number of shares (1 to MAX_SHARES);
+ * - adjust: how much more (or, below 0, less) than the others a person pays, in smallest units;
+ *   only for those it applies to, never 0.
+ * For exact, percent and shares the keys are exactly the people sharing it; for adjust, some of them.
+ */
+export type SplitParams = Record<string, number>;
+
+/** 100%, in the hundredths of a percent that percentage splits are given in. */
+export const FULL_PERCENT = 10_000;
+
+/** The most shares one person may count for: plenty for a split, small enough to stay exact. */
+export const MAX_SHARES = 100;
+
+/** Why a split doesn't work; the API reports the code (error.<code> in src/shared/i18n.ts). */
+export type SplitErrorCode =
+  | "invalid_split"
+  | "split_exact_total"
+  | "split_percent_total"
+  | "split_adjust_too_large"
+  | "split_adjust_negative";
+
+export class SplitError extends Error {
+  constructor(public code: SplitErrorCode) {
+    super(code);
+  }
+}
+
+const isWhole = (v: unknown, min: number, max: number): v is number =>
+  typeof v === "number" && Number.isSafeInteger(v) && v >= min && v <= max;
+
+/**
+ * Each person's share of `amount` (smallest units) split by `method`; throws a SplitError when the
+ * split doesn't add up or `params` don't fit the method. Shared by the form, which shows the shares
+ * as they are typed, and the server, which works them out again for itself. `participants` must be
+ * distinct, non-empty ids; whether they are in the group is up to the caller.
+ */
+export function splitShares(
+  method: SplitMethod,
+  amount: number,
+  participants: readonly string[],
+  params: SplitParams | null | undefined,
+): Map<string, number> {
+  const entries = params == null ? null : Object.entries(params);
+  if (method === "equal") {
+    if (entries?.length) throw new SplitError("invalid_split");
+    return splitEqual(amount, participants);
+  }
+  if (!entries) throw new SplitError("invalid_split");
+  const taking = new Set(participants);
+  if (method === "adjust") {
+    if (!entries.every(([id, v]) => taking.has(id) && v !== 0 && isWhole(v, -MAX_AMOUNT, MAX_AMOUNT)))
+      throw new SplitError("invalid_split");
+    const rest = amount - entries.reduce((a, [, v]) => a + v, 0);
+    if (rest < 0) throw new SplitError("split_adjust_too_large");
+    // Only reachable with absurdly large reductions; keeps the sums below exact-integer limits.
+    if (rest > MAX_AMOUNT) throw new SplitError("invalid_split");
+    const shares = splitEqual(rest, participants);
+    for (const [id, v] of entries) shares.set(id, shares.get(id)! + v);
+    if ([...shares.values()].some((v) => v < 0)) throw new SplitError("split_adjust_negative");
+    return shares;
+  }
+  // exact, percent, shares: one value for each person taking part, and no one else.
+  const max = method === "exact" ? MAX_AMOUNT : method === "percent" ? FULL_PERCENT : MAX_SHARES;
+  if (entries.length !== taking.size || !entries.every(([id, v]) => taking.has(id) && isWhole(v, 1, max)))
+    throw new SplitError("invalid_split");
+  const ids = entries.map(([id]) => id);
+  const values = entries.map(([, v]) => v);
+  const total = values.reduce((a, b) => a + b, 0);
+  if (method === "exact") {
+    if (total !== amount) throw new SplitError("split_exact_total");
+    return new Map(entries);
+  }
+  if (method === "percent" && total !== FULL_PERCENT) throw new SplitError("split_percent_total");
+  return spread(amount, values, ids);
 }
 
 /** Splits `amount` equally among `userIds`; see `spread`. */

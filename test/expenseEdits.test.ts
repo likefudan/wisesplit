@@ -23,6 +23,9 @@ interface Fields {
   participants: Person[];
   description?: string;
   date?: string;
+  splitMethod?: string;
+  /** By user id; see SplitParams in src/shared/expenses.ts. */
+  splitParams?: Record<string, number>;
 }
 
 const body = (f: Fields) => ({
@@ -30,8 +33,9 @@ const body = (f: Fields) => ({
   amount: f.amount,
   paidBy: f.paidBy.id,
   date: f.date ?? "2026-10-01",
-  splitMethod: "equal",
+  splitMethod: f.splitMethod ?? "equal",
   participants: f.participants.map((p) => p.id),
+  splitParams: f.splitParams ?? null,
 });
 
 async function addExpense(groupId: string, by: Person, f: Fields) {
@@ -247,6 +251,7 @@ describe("deleting an expense", () => {
       paidBy: bob.id,
       date: "2026-10-01",
       splitMethod: "equal",
+      splitParams: null,
       shares: { [ann.id]: 500, [bob.id]: 500 },
     });
     // The row stays, marked.
@@ -365,6 +370,173 @@ describe("expenses with someone who has left", () => {
     const added = await addExpense(id, bob, { amount: 600, paidBy: bob, participants: [bob] });
     expect((await post(`/api/groups/${id}/leave`, bob.cookie)).status).toBe(204);
     expect((await del(id, ann, added)).status).toBe(204);
+  });
+});
+
+describe("editing with each way of splitting", () => {
+  const sharesOf = (expense: any) => Object.fromEntries(expense.shares.map((s: any) => [s.userId, s.amount]));
+
+  it("moves an expense from one split method to the next, logging the split each time", async () => {
+    const { id, people } = await makeGroup(["Ann", "Bob", "Cat"]);
+    const [ann, bob, cat] = people as [Person, Person, Person];
+    let expense = await addExpense(id, ann, { amount: 1000, paidBy: ann, participants: [ann, bob, cat] });
+    const steps: [Fields, Record<string, number>][] = [
+      [
+        {
+          amount: 1000,
+          paidBy: ann,
+          participants: [ann, bob],
+          splitMethod: "exact",
+          splitParams: { [ann.id]: 300, [bob.id]: 700 },
+        },
+        { [ann.id]: 300, [bob.id]: 700 },
+      ],
+      [
+        {
+          amount: 1000,
+          paidBy: ann,
+          participants: [bob, cat],
+          splitMethod: "percent",
+          splitParams: { [bob.id]: 2500, [cat.id]: 7500 },
+        },
+        { [bob.id]: 250, [cat.id]: 750 },
+      ],
+      [
+        {
+          amount: 1200,
+          paidBy: bob,
+          participants: [ann, bob, cat],
+          splitMethod: "shares",
+          splitParams: { [ann.id]: 1, [bob.id]: 2, [cat.id]: 3 },
+        },
+        { [ann.id]: 200, [bob.id]: 400, [cat.id]: 600 },
+      ],
+      [
+        {
+          amount: 1200,
+          paidBy: bob,
+          participants: [ann, bob, cat],
+          splitMethod: "adjust",
+          splitParams: { [cat.id]: 300 },
+        },
+        { [ann.id]: 300, [bob.id]: 300, [cat.id]: 600 },
+      ],
+      [
+        { amount: 1200, paidBy: bob, participants: [ann, bob, cat] },
+        { [ann.id]: 400, [bob.id]: 400, [cat.id]: 400 },
+      ],
+    ];
+    for (const [fields, shares] of steps) {
+      const res = await edit(id, cat, expense, fields);
+      expect(res.status, fields.splitMethod).toBe(200);
+      const previous = expense;
+      expense = (await json(res)).expense;
+      expect(expense.splitMethod).toBe(fields.splitMethod ?? "equal");
+      expect(expense.splitParams).toEqual(fields.splitParams ?? null);
+      expect(sharesOf(expense)).toEqual(shares);
+      // As the edit form will load it again.
+      expect(
+        (await json(await send(`/api/groups/${id}/expenses/${expense.id}`, { cookie: bob.cookie }))).expense,
+      ).toEqual(expense);
+      const { entries } = await activity(id, ann);
+      expect(entries[0].data.before).toMatchObject({
+        splitMethod: previous.splitMethod,
+        shares: sharesOf(previous),
+      });
+      expect(entries[0].data.after).toMatchObject({ splitMethod: expense.splitMethod, shares });
+      expect(entries[0].data.before.splitParams ?? null).toEqual(previous.splitParams);
+      expect(entries[0].data.after.splitParams ?? null).toEqual(expense.splitParams);
+    }
+    expect(await balancesOf(id, ann)).toEqual({ [ann.id]: -400, [bob.id]: 800, [cat.id]: -400 });
+  });
+
+  it("logs a change of percentages alone, and nothing for the same split sent again", async () => {
+    const { id, people } = await makeGroup(["Ann", "Bob"]);
+    const [ann, bob] = people as [Person, Person];
+    const split = { amount: 1000, paidBy: ann, participants: [ann, bob], splitMethod: "percent" };
+    const added = await addExpense(id, ann, { ...split, splitParams: { [ann.id]: 5000, [bob.id]: 5000 } });
+    const same = await edit(id, bob, added, { ...split, splitParams: { [bob.id]: 5000, [ann.id]: 5000 } });
+    expect((await json(same)).expense.version).toBe(1);
+    const res = await edit(id, bob, added, { ...split, splitParams: { [ann.id]: 3000, [bob.id]: 7000 } });
+    expect(res.status).toBe(200);
+    const { entries } = await activity(id, ann);
+    expect(entries[0].data).toEqual({
+      description: "Dinner",
+      before: { splitParams: { [ann.id]: 5000, [bob.id]: 5000 }, shares: { [ann.id]: 500, [bob.id]: 500 } },
+      after: { splitParams: { [ann.id]: 3000, [bob.id]: 7000 }, shares: { [ann.id]: 300, [bob.id]: 700 } },
+    });
+  });
+
+  it("checks the split as when adding, and changes nothing when it doesn't add up", async () => {
+    const { id, people } = await makeGroup(["Ann", "Bob"]);
+    const [ann, bob] = people as [Person, Person];
+    const added = await addExpense(id, ann, { amount: 1000, paidBy: ann, participants: [ann, bob] });
+    for (const [fields, code] of [
+      [{ splitMethod: "exact", splitParams: { [ann.id]: 300, [bob.id]: 600 } }, "split_exact_total"],
+      [{ splitMethod: "percent", splitParams: { [ann.id]: 3000, [bob.id]: 6000 } }, "split_percent_total"],
+      [{ splitMethod: "shares", splitParams: { [ann.id]: 0, [bob.id]: 1 } }, "invalid_split"],
+      [{ splitMethod: "adjust", splitParams: { [ann.id]: 1500 } }, "split_adjust_too_large"],
+      [{ splitMethod: "equal", splitParams: { [ann.id]: 1 } }, "invalid_split"],
+    ] as const) {
+      const res = await edit(id, bob, added, { amount: 1000, paidBy: ann, participants: [ann, bob], ...fields });
+      expect(res.status, fields.splitMethod).toBe(400);
+      expect(await errorCode(res), fields.splitMethod).toBe(code);
+    }
+    expect((await json(await send(`/api/groups/${id}/expenses/${added.id}`, { cookie: bob.cookie }))).expense).toEqual(
+      added,
+    );
+  });
+
+  it("keeps someone who has left as they were in a split by shares", async () => {
+    const { id, people } = await makeGroup(["Ann", "Bob", "Cat"]);
+    const [ann, bob, cat] = people as [Person, Person, Person];
+    const split = { paidBy: ann, participants: [ann, bob, cat], splitMethod: "shares" };
+    const dinner = await addExpense(id, ann, {
+      ...split,
+      amount: 1200,
+      splitParams: { [ann.id]: 1, [bob.id]: 1, [cat.id]: 2 },
+    });
+    await addExpense(id, cat, { amount: 600, paidBy: cat, participants: [ann] });
+    await addExpense(id, bob, { amount: 300, paidBy: bob, participants: [ann] });
+    expect((await post(`/api/groups/${id}/leave`, cat.cookie)).status).toBe(204);
+    // Bob takes more shares: Cat's part of the 12.00 changes, so no.
+    let res = await edit(id, bob, dinner, {
+      ...split,
+      amount: 1200,
+      splitParams: { [ann.id]: 1, [bob.id]: 3, [cat.id]: 2 },
+    });
+    expect(res.status).toBe(409);
+    expect(await errorCode(res)).toBe("former_member_involved");
+    // The same 6.00 for Cat, as an exact amount: allowed.
+    res = await edit(id, bob, dinner, {
+      ...split,
+      amount: 1200,
+      splitMethod: "exact",
+      splitParams: { [ann.id]: 200, [bob.id]: 400, [cat.id]: 600 },
+    });
+    expect(res.status).toBe(200);
+    // Bob now pays 1.00 more of it, to Ann; Cat is still even.
+    expect(await balancesOf(id, ann)).toEqual({ [ann.id]: 100, [bob.id]: -100 });
+  });
+
+  it("a deleted adjusted expense keeps its split in the log", async () => {
+    const { id, people } = await makeGroup(["Ann", "Bob"]);
+    const [ann, bob] = people as [Person, Person];
+    const added = await addExpense(id, ann, {
+      amount: 1000,
+      paidBy: ann,
+      participants: [ann, bob],
+      splitMethod: "adjust",
+      splitParams: { [bob.id]: -200 },
+    });
+    expect((await del(id, bob, added)).status).toBe(204);
+    const { entries } = await activity(id, ann);
+    expect(entries[0].data).toMatchObject({
+      splitMethod: "adjust",
+      splitParams: { [bob.id]: -200 },
+      shares: { [ann.id]: 600, [bob.id]: 400 },
+    });
+    expect(await balancesOf(id, ann)).toEqual({ [ann.id]: 0, [bob.id]: 0 });
   });
 });
 

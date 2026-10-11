@@ -138,7 +138,7 @@ function ActivityRow({
   function changeLines(before: Partial<ExpenseSnapshot>, after: Partial<ExpenseSnapshot>): string[] {
     const lines: string[] = [];
     const method = (m: string) => {
-      const key = `splitMethod.${m}`;
+      const key = `expenseNew.method.${m}`;
       return isMessageKey(key) ? t(key) : m;
     };
     if (before.description !== undefined && after.description !== undefined)

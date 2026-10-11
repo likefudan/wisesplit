@@ -420,6 +420,21 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+.split-input {
+  width: 7em;
+  flex: none;
+  text-align: right;
+}
+
+.field input.split-input[aria-invalid="true"] {
+  border-color: var(--error);
+}
+
+.participant-pick {
+  flex: 1;
+  min-width: 0;
+}
+
 .expense-actions {
   margin-top: 8px;
 }

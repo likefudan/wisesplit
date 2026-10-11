@@ -1,6 +1,6 @@
 /** A group's activity log, as the API shows it (GET /api/groups/:id/activity). */
 
-import type { SplitMethod } from "./expenses";
+import type { SplitMethod, SplitParams } from "./expenses";
 
 /** Log entries per page of a group's activity. */
 export const ACTIVITY_PAGE = 20;
@@ -15,6 +15,8 @@ export interface ExpenseSnapshot {
   paidBy: string;
   date: string;
   splitMethod: SplitMethod;
+  /** The split as entered (src/shared/expenses.ts); null for an equal split, missing before PR 4. */
+  splitParams?: SplitParams | null;
   shares: Record<string, number>;
 }
 
