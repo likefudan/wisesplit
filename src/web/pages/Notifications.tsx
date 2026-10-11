@@ -181,6 +181,7 @@ function SettingsForm({ me }: { me: User }) {
   const { t } = useI18n();
   const errorText = useErrorText();
   const [settings, setSettings] = useState<NotificationSettings | null>(null);
+  const [emailAvailable, setEmailAvailable] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: true } | { ok: false; error: unknown } | null>(null);
@@ -188,8 +189,12 @@ function SettingsForm({ me }: { me: User }) {
   useEffect(() => {
     let alive = true;
     setMessage(null);
-    api<{ settings: NotificationSettings }>("/api/notifications/settings")
-      .then((r) => alive && setSettings(r.settings))
+    api<{ settings: NotificationSettings; emailAvailable: boolean }>("/api/notifications/settings")
+      .then((r) => {
+        if (!alive) return;
+        setSettings(r.settings);
+        setEmailAvailable(r.emailAvailable);
+      })
       .catch((e) => alive && setMessage({ ok: false, error: e }));
     return () => {
       alive = false;
@@ -238,16 +243,21 @@ function SettingsForm({ me }: { me: User }) {
             <span>{t("notifySettings.inApp")}</span>
           </label>
           <small class="muted">{t("notifySettings.inAppHint")}</small>
-          <label class="field checkbox">
-            <input
-              type="checkbox"
-              checked={settings.email}
-              disabled={busy}
-              onChange={(e) => save({ email: e.currentTarget.checked })}
-            />
-            <span>{t("notifySettings.email")}</span>
-          </label>
-          <small class="muted">{t("notifySettings.emailHint", { email: me.email })}</small>
+          {/* Not offered where the site can't send email. */}
+          {emailAvailable && (
+            <>
+              <label class="field checkbox">
+                <input
+                  type="checkbox"
+                  checked={settings.email}
+                  disabled={busy}
+                  onChange={(e) => save({ email: e.currentTarget.checked })}
+                />
+                <span>{t("notifySettings.email")}</span>
+              </label>
+              <small class="muted">{t("notifySettings.emailHint", { email: me.email })}</small>
+            </>
+          )}
           {message &&
             (message.ok ? (
               <p class="success" role="status">

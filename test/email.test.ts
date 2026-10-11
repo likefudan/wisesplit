@@ -151,8 +151,9 @@ describe("email notifications", () => {
       settings: { inApp: false, email: true },
     });
     expect((await post("/api/notifications/settings", bob.cookie, { email: "no", inApp: false })).status).toBe(400);
-    expect(await json(await send("/api/notifications/settings", { cookie: bob.cookie }))).toEqual({
+    expect(await json(await send("/api/notifications/settings", { cookie: bob.cookie, env: MAIL }))).toEqual({
       settings: { inApp: true, email: false },
+      emailAvailable: true,
     });
     const { sent } = mockResend();
     await post(`/api/groups/${id}/expenses`, ann.cookie, expenseBody(ann, 3000, [ann, bob, cat]));
@@ -173,6 +174,9 @@ describe("email notifications", () => {
     const first = await post(`/api/groups/${id}/expenses`, ann.cookie, expenseBody(ann, 3000, [ann, bob, cat]));
     expect(first.status).toBe(200);
     expect(errors).toHaveBeenCalledWith("emails not sent:", 429, expect.stringContaining("Too many emails"));
+    // Tried twice (another request's emails may have just gone), and then not counted for the day.
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(2);
+    expect(await env.DB.prepare("SELECT count FROM email_days").first("count")).toBe(0);
     vi.mocked(globalThis.fetch).mockRestore();
 
     // … or can't be reached at all.

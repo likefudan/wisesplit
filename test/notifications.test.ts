@@ -182,6 +182,7 @@ describe("notifications", () => {
     const [ann, bob, cat] = people as [Person, Person, Person];
     expect(await json(await send("/api/notifications/settings", { cookie: bob.cookie }))).toEqual({
       settings: { inApp: true, email: true },
+      emailAvailable: false,
     });
     const off = await post("/api/notifications/settings", bob.cookie, { inApp: false });
     expect(await json(off)).toEqual({ settings: { inApp: false, email: true } });

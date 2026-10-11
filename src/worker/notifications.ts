@@ -157,7 +157,7 @@ async function email(env: Env, event: NotifyEvent, notes: Note[]): Promise<void>
     const groupId = groupOf(event);
     const byUser = new Map(notes.map((n) => [n.userId, { ...n, actorId: event.actorId }]));
     const ids = [...new Set([...byUser.values()].flatMap(mentioned))];
-    const [{ results: people }, group, { results: users }] = await Promise.all([
+    const [{ results: people }, group, names] = await Promise.all([
       env.DB.prepare(
         `SELECT u.id, u.email, u.lang FROM users u
          WHERE u.id IN (SELECT value FROM json_each(?)) AND u.status = ?
@@ -176,13 +176,10 @@ async function email(env: Env, event: NotifyEvent, notes: Note[]): Promise<void>
             .bind(groupId)
             .first<{ id: string; name: string; currency: Currency }>()
         : null,
-      env.DB.prepare("SELECT id, name FROM users WHERE id IN (SELECT value FROM json_each(?))")
-        .bind(JSON.stringify(ids))
-        .all<{ id: string; name: string }>(),
+      namesOf(env, ids),
     ]);
     // The group was deleted in the meantime: there is nothing left to point to.
     if (!people.length || (groupId && !group)) return;
-    const names = Object.fromEntries(users.map((u) => [u.id, u.name]));
     const emails = people.flatMap((person) => {
       const note = byUser.get(person.id);
       return (note && notificationEmail(env, person, note, group, names)) ?? [];
@@ -215,6 +212,14 @@ export async function unreadCount(env: Env, userId: string): Promise<number> {
     .bind(userId, UNREAD_MAX + 1)
     .first<{ n: number }>();
   return row?.n ?? 0;
+}
+
+/** The name of each of `ids`, by id. */
+async function namesOf(env: Env, ids: string[]): Promise<Record<string, string>> {
+  const { results } = await env.DB.prepare("SELECT id, name FROM users WHERE id IN (SELECT value FROM json_each(?))")
+    .bind(JSON.stringify(ids))
+    .all<{ id: string; name: string }>();
+  return Object.fromEntries(results.map((u) => [u.id, u.name]));
 }
 
 /** Ids a notification mentions: who did it, and who paid or was paid. */
@@ -273,15 +278,9 @@ export async function notificationPage(
         read: r.read_at !== null,
       }) as AppNotification,
   );
-  const ids = [...new Set(notifications.flatMap(mentioned))];
-  const { results: users } = await env.DB.prepare(
-    "SELECT id, name FROM users WHERE id IN (SELECT value FROM json_each(?))",
-  )
-    .bind(JSON.stringify(ids))
-    .all<{ id: string; name: string }>();
   return {
     notifications,
-    names: Object.fromEntries(users.map((u) => [u.id, u.name])),
+    names: await namesOf(env, [...new Set(notifications.flatMap(mentioned))]),
     next: results.length > size ? notifications[notifications.length - 1]!.id : null,
     unread,
   };

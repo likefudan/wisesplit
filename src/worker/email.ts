@@ -26,7 +26,8 @@ export const SIGNUP_RESERVE = 10;
 
 /**
  * Sends `emails` through Resend in one request (its free tier allows only a couple of requests a
- * second), if today's count stays within `limit` (EMAILS_PER_DAY, or less to keep some for later).
+ * second), if today's count stays within `limit` (EMAILS_PER_DAY, or less to keep some for later);
+ * otherwise none of them, so nobody gets half an event's emails depending on who came first.
  * How many Resend accepted. A refusal or failure is logged, never thrown. Addresses that can't get
  * mail are left out.
  */
@@ -34,34 +35,46 @@ export async function sendEmails(env: Env, emails: Email[], limit: number): Prom
   const deliverable = emails.filter((e) => !UNDELIVERABLE.test(e.to.split("@").pop() ?? ""));
   if (!canEmail(env) || !deliverable.length) return 0;
   const n = deliverable.length;
+  const day = now().slice(0, 10);
   try {
     // Counted before sending, in the statement that checks the limit, so emails sent at the same
-    // moment can't both slip under it. A failed send still counts: Resend may have counted it too.
+    // moment can't both slip under it. One that may have reached Resend (the connection failed) still counts.
     const room = await env.DB.prepare(
       `INSERT INTO email_days (day, count) SELECT ?, ? WHERE ? <= ?
        ON CONFLICT (day) DO UPDATE SET count = count + excluded.count WHERE count + excluded.count <= ?
        RETURNING count`,
     )
-      .bind(now().slice(0, 10), n, n, limit, limit)
+      .bind(day, n, n, limit, limit)
       .first();
     if (!room) {
       console.warn(`daily email limit reached; ${n} not sent`);
       return 0;
     }
-    const res = await fetch("https://api.resend.com/emails/batch", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.RESEND_API_KEY}`,
-        "Content-Type": "application/json",
-        // An address Resend refuses fails only its own email, not the whole batch.
-        "x-batch-validation": "permissive",
-      },
-      body: JSON.stringify(
-        deliverable.map((e) => ({ from: env.EMAIL_FROM, to: [e.to], subject: e.subject, text: e.text, html: e.html })),
-      ),
-    });
+    const body = JSON.stringify(
+      deliverable.map((e) => ({ from: env.EMAIL_FROM, to: [e.to], subject: e.subject, text: e.text, html: e.html })),
+    );
+    const post = () =>
+      fetch("https://api.resend.com/emails/batch", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.RESEND_API_KEY}`,
+          "Content-Type": "application/json",
+          // An address Resend refuses fails only its own email, not the whole batch.
+          "x-batch-validation": "permissive",
+        },
+        body,
+      });
+    let res = await post();
+    // Too many requests at once (another route's emails, say): try once more a moment later.
+    if (res.status === 429) {
+      await res.body?.cancel();
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      res = await post();
+    }
     if (!res.ok) {
       console.error("emails not sent:", res.status, (await res.text()).slice(0, 500));
+      // Refused, so none went out: they don't count.
+      await env.DB.prepare("UPDATE email_days SET count = MAX(0, count - ?) WHERE day = ?").bind(n, day).run();
       return 0;
     }
     const { errors } = (await res.json().catch(() => ({}))) as { errors?: unknown[] };
@@ -80,7 +93,7 @@ const escapeHtml = (s: string) =>
 const withLink = (lang: Lang, key: "email.footer" | "email.signupRejected", url: string) =>
   escapeHtml(translate(lang, key, { url: "\u0000" })).replace(
     "\u0000",
-    `<a href="${escapeHtml(url)}">${escapeHtml(url)}</a>`,
+    () => `<a href="${escapeHtml(url)}">${escapeHtml(url)}</a>`,
   );
 
 /**
