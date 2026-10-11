@@ -33,7 +33,7 @@ expenseRoutes.post("/expenses", async (c) => {
     c.env.DB.prepare(
       `INSERT INTO expenses (id, group_id, description, amount, paid_by, date, split_method, split_params,
          created_by, created_at)
-       SELECT ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
        WHERE (SELECT COUNT(*) FROM group_members WHERE group_id = ? AND user_id IN (SELECT value FROM json_each(?))) = ?
        RETURNING id`,
     ).bind(
@@ -44,6 +44,7 @@ expenseRoutes.post("/expenses", async (c) => {
       e.paidBy,
       e.date,
       e.splitMethod,
+      e.splitParams === null ? null : JSON.stringify(e.splitParams),
       me.id,
       at,
       group.id,
@@ -68,6 +69,7 @@ expenseRoutes.post("/expenses", async (c) => {
         paidBy: e.paidBy,
         date: e.date,
         splitMethod: e.splitMethod,
+        splitParams: e.splitParams,
         shares: Object.fromEntries(e.shares),
       }),
       at,
