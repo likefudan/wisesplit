@@ -15,12 +15,18 @@ export const receiptRoutes = new Hono<AppEnv>();
 
 const noSuchExpense = () => new HttpError(404, "expense_not_found", "No such expense in this group");
 
+/** Whether the expense is in the group and not deleted. */
 const expenseExists = async (env: Env, groupId: string, expenseId: string) =>
-  !!(await env.DB.prepare("SELECT 1 FROM expenses WHERE id = ? AND group_id = ?").bind(expenseId, groupId).first());
+  !!(await env.DB.prepare("SELECT 1 FROM expenses WHERE id = ? AND group_id = ? AND deleted_at IS NULL")
+    .bind(expenseId, groupId)
+    .first());
 
-/** SQL that is true while expense ? is in group ? and user ? is in that group. */
+/** SQL that is true while expense ? is in group ?, not deleted, and user ? is in that group. */
 const MEMBER_EXPENSE_SQL = `EXISTS (SELECT 1 FROM expenses e JOIN group_members m ON m.group_id = e.group_id
-  WHERE e.id = ? AND e.group_id = ? AND m.user_id = ?)`;
+  WHERE e.id = ? AND e.group_id = ? AND e.deleted_at IS NULL AND m.user_id = ?)`;
+
+/** The expense's description as the log keeps it (JSON), so the activity page can name it. */
+const LOG_DATA_SQL = "(SELECT json_object('description', description) FROM expenses WHERE id = ?)";
 
 // The photo itself. Checked against the group on every view (`no-cache`): someone who has left
 // can't load it again, however long their browser keeps it.
@@ -31,7 +37,7 @@ receiptRoutes.get("/expenses/:expenseId/receipt", async (c) => {
   const row = await c.env.DB.prepare(
     `SELECT r.object_key FROM receipts r JOIN expenses e ON e.id = r.expense_id
        JOIN group_members m ON m.group_id = e.group_id AND m.user_id = ?
-     WHERE e.group_id = ? AND e.id = ?`,
+     WHERE e.group_id = ? AND e.id = ? AND e.deleted_at IS NULL`,
   )
     .bind(me, groupId, c.req.param("expenseId"))
     .first<{ object_key: string }>();
@@ -76,20 +82,9 @@ receiptRoutes.post("/expenses/:expenseId/receipt", async (c) => {
       `INSERT INTO activity_log (id, group_id, actor_id, action, subject_id, data, created_at)
        SELECT ?, ?, ?,
          CASE WHEN EXISTS (SELECT 1 FROM receipts WHERE expense_id = ?) THEN 'receipt.replaced' ELSE 'receipt.added' END,
-         ?, ?, ?
+         ?, ${LOG_DATA_SQL}, ?
        WHERE ${MEMBER_EXPENSE_SQL}`,
-    ).bind(
-      randomId(),
-      group.id,
-      me.id,
-      expenseId,
-      expenseId,
-      JSON.stringify({ size: jpeg.length }),
-      at,
-      expenseId,
-      group.id,
-      me.id,
-    ),
+    ).bind(randomId(), group.id, me.id, expenseId, expenseId, expenseId, at, expenseId, group.id, me.id),
     c.env.DB.prepare(
       `INSERT INTO receipts (expense_id, id, object_key, size, uploaded_by, uploaded_at)
        SELECT ?, ?, ?, ?, ?, ? WHERE ${MEMBER_EXPENSE_SQL}
@@ -117,9 +112,9 @@ receiptRoutes.post("/expenses/:expenseId/receipt/delete", async (c) => {
   const [, removed] = await c.env.DB.batch([
     c.env.DB.prepare(
       `INSERT INTO activity_log (id, group_id, actor_id, action, subject_id, data, created_at)
-       SELECT ?, ?, ?, 'receipt.removed', ?, NULL, ?
+       SELECT ?, ?, ?, 'receipt.removed', ?, ${LOG_DATA_SQL}, ?
        WHERE EXISTS (SELECT 1 FROM receipts WHERE expense_id = ?) AND ${MEMBER_EXPENSE_SQL}`,
-    ).bind(randomId(), group.id, me.id, expenseId, now(), expenseId, ...member),
+    ).bind(randomId(), group.id, me.id, expenseId, expenseId, now(), expenseId, ...member),
     c.env.DB.prepare(`DELETE FROM receipts WHERE expense_id = ? AND ${MEMBER_EXPENSE_SQL} RETURNING object_key`).bind(
       expenseId,
       ...member,

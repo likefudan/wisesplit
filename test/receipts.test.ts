@@ -164,6 +164,30 @@ describe("receipt photos", () => {
     expect((await json(res)).error.code).toBe("expense_not_found");
   });
 
+  it("deleting the expense deletes its photo, and the log names the expense", async () => {
+    const { id, people } = await makeGroup(["Ann", "Bob"]);
+    const [ann, bob] = people as [Person, Person];
+    const expenseId = await addExpense(id, ann, ann, [ann, bob]);
+    expect((await upload(receiptOf(id, expenseId), bob.cookie, photo())).status).toBe(200);
+    expect((await post(`/api/groups/${id}/expenses/${expenseId}/delete`, ann.cookie, { version: 1 })).status).toBe(204);
+    expect(await objectsOf(id)).toEqual([]);
+    expect(
+      await env.DB.prepare("SELECT COUNT(*) AS n FROM receipts WHERE expense_id = ?").bind(expenseId).first("n"),
+    ).toBe(0);
+    expect((await send(receiptOf(id, expenseId), { cookie: ann.cookie })).status).toBe(404);
+    const res = await upload(receiptOf(id, expenseId), ann.cookie, photo());
+    expect(res.status).toBe(404);
+    expect((await json(res)).error.code).toBe("expense_not_found");
+    expect(await objectsOf(id)).toEqual([]);
+
+    const { entries } = await json(await send(`/api/groups/${id}/activity`, { cookie: ann.cookie }));
+    expect(entries.find((e: any) => e.action === "receipt.added")).toMatchObject({
+      actorId: bob.id,
+      subjectId: expenseId,
+      data: { description: "Dinner" },
+    });
+  });
+
   it("only the group's members can see or change it", async () => {
     const { id, people } = await makeGroup(["Ann", "Bob", "Cat"]);
     const [ann, bob, cat] = people as [Person, Person, Person];

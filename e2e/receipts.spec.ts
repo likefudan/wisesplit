@@ -51,9 +51,9 @@ test("add a receipt photo with an expense, then replace and remove it", async ({
 
   // In the list it is marked, and shows once the expense is opened: a JPEG, no bigger than 1600px.
   await expect(page.getByRole("heading", { name: groupName })).toBeVisible();
-  const row = page.getByRole("listitem").filter({ hasText: "Groceries" });
+  const row = page.locator("details.expense").filter({ hasText: "Groceries" });
   await expect(row.locator(".badge")).toHaveText("receipt");
-  await row.getByText("Groceries").click();
+  await row.locator("summary").click();
   const photo = row.getByRole("img", { name: "Receipt for Groceries" });
   await expect(photo).toBeVisible();
   await expect.poll(() => photo.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(1600);
@@ -72,6 +72,11 @@ test("add a receipt photo with an expense, then replace and remove it", async ({
   await row.getByRole("button", { name: "Remove photo" }).click();
   await expect(photo).toHaveCount(0);
   await expect(row.locator(".badge")).toHaveCount(0);
+  // Each change is in the group's activity.
+  const activity = page.locator(".activity-row");
+  await expect(activity.filter({ hasText: "Admin removed the receipt photo of “Groceries”" })).toBeVisible();
+  await expect(activity.filter({ hasText: "Admin replaced the receipt photo of “Groceries”" })).toBeVisible();
+  await expect(activity.filter({ hasText: "Admin added a receipt photo to “Groceries”" })).toBeVisible();
   await expect(row.getByLabel("Add receipt photo")).toBeAttached();
   expect((await page.request.get(src!)).status()).toBe(404);
 

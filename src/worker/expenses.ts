@@ -1,3 +1,4 @@
+import type { ExpenseChange, ExpenseSnapshot } from "../shared/activity";
 import {
   type Balance,
   DESCRIPTION_MAX,
@@ -5,8 +6,10 @@ import {
   type NewExpense,
   type Share,
   SPLIT_METHODS,
+  SplitError,
+  type SplitParams,
   isSplitMethod,
-  splitEqual,
+  splitShares,
 } from "../shared/expenses";
 import { MAX_AMOUNT } from "../shared/money";
 import type { Env } from "./env";
@@ -45,11 +48,22 @@ export function parseDay(value: unknown): string {
   return value as string;
 }
 
+/** What the API says for each way a split can fail. */
+const SPLIT_ERRORS: Record<SplitError["code"], string> = {
+  invalid_split: "The split doesn't fit its method: see SplitParams in src/shared/expenses.ts",
+  split_exact_total: "The exact amounts must add up to the total",
+  split_percent_total: "The percentages must add up to 100%",
+  split_adjust_too_large: "The adjustments add up to more than the total",
+  split_adjust_negative: "An adjustment leaves someone paying less than nothing",
+};
+
 /**
  * The expense in a request body, checked on its own; whether the people in it are in the group is
  * checked as it is added. Each person's share is worked out here, from the split.
  */
-export function parseNewExpense(body: Record<string, unknown>): NewExpense & { shares: Map<string, number> } {
+export function parseNewExpense(
+  body: Record<string, unknown>,
+): NewExpense & { splitParams: SplitParams | null; shares: Map<string, number> } {
   const description = parseDescription(body.description);
   const amount = parseAmountUnits(body.amount);
   const paidBy = typeof body.paidBy === "string" && body.paidBy ? body.paidBy : null;
@@ -66,6 +80,17 @@ export function parseNewExpense(body: Record<string, unknown>): NewExpense & { s
     new Set(participants).size !== participants.length
   )
     throw new HttpError(400, "invalid_participants", "Pick who shares the expense, each person once");
+  const params = body.splitParams ?? null;
+  if (params !== null && (typeof params !== "object" || Array.isArray(params)))
+    throw new HttpError(400, "invalid_split", SPLIT_ERRORS.invalid_split);
+  const splitParams = params as SplitParams | null;
+  let shares: Map<string, number>;
+  try {
+    shares = splitShares(body.splitMethod, amount, participants, splitParams);
+  } catch (err) {
+    if (err instanceof SplitError) throw new HttpError(400, err.code, SPLIT_ERRORS[err.code]);
+    throw err;
+  }
   return {
     description,
     amount,
@@ -73,7 +98,8 @@ export function parseNewExpense(body: Record<string, unknown>): NewExpense & { s
     date,
     splitMethod: body.splitMethod,
     participants,
-    shares: splitEqual(amount, participants),
+    splitParams: body.splitMethod === "equal" ? null : splitParams,
+    shares,
   };
 }
 
@@ -85,14 +111,17 @@ interface ExpenseRow {
   paid_by_name: string;
   date: string;
   split_method: Expense["splitMethod"];
+  split_params: string | null;
   created_by: string;
   created_at: string;
+  updated_at: string | null;
+  version: number;
   shares: string;
   receipt: string | null;
 }
 
 const EXPENSE_SELECT = `SELECT e.id, e.description, e.amount, e.paid_by, p.name AS paid_by_name, e.date,
-    e.split_method, e.created_by, e.created_at,
+    e.split_method, e.split_params, e.created_by, e.created_at, e.updated_at, e.version,
     (SELECT json_group_array(json_object('userId', s.user_id, 'name', u.name, 'amount', s.amount))
       FROM expense_shares s JOIN users u ON u.id = s.user_id WHERE s.expense_id = e.id) AS shares,
     (SELECT r.id FROM receipts r WHERE r.expense_id = e.id) AS receipt
@@ -108,22 +137,27 @@ const toExpense = (r: ExpenseRow): Expense => ({
   paidByName: r.paid_by_name,
   date: r.date,
   splitMethod: r.split_method,
+  splitParams: r.split_params === null ? null : (JSON.parse(r.split_params) as SplitParams),
   shares: (JSON.parse(r.shares) as Share[]).sort((a, b) => (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0)),
   createdBy: r.created_by,
   createdAt: r.created_at,
+  updatedAt: r.updated_at,
+  version: r.version,
   receipt: r.receipt,
 });
 
+/** The expense, unless it was deleted. */
 export async function expenseById(env: Env, groupId: string, id: string): Promise<Expense | null> {
-  const row = await env.DB.prepare(`${EXPENSE_SELECT} WHERE e.group_id = ? AND e.id = ?`)
+  const row = await env.DB.prepare(`${EXPENSE_SELECT} WHERE e.group_id = ? AND e.id = ? AND e.deleted_at IS NULL`)
     .bind(groupId, id)
     .first<ExpenseRow>();
   return row ? toExpense(row) : null;
 }
 
 /**
- * One page of a group's expenses, newest day first (and, within a day, the last added first).
- * `before` is the id of the last expense on the previous page.
+ * One page of a group's expenses, newest day first (and, within a day, the last added first),
+ * leaving out deleted ones. `before` is the previous page's `next`: where in that order the page
+ * ended, as it was then, so an expense since deleted or moved to another day changes nothing.
  */
 export async function expensePage(
   env: Env,
@@ -133,33 +167,38 @@ export async function expensePage(
 ): Promise<{ expenses: Expense[]; next: string | null }> {
   let statement: D1PreparedStatement;
   if (before) {
-    const after = await env.DB.prepare("SELECT date, created_at, id FROM expenses WHERE group_id = ? AND id = ?")
-      .bind(groupId, before)
-      .first<{ date: string; created_at: string; id: string }>();
-    if (!after) throw new HttpError(400, "invalid_cursor", "No such expense to list from");
+    const [date, createdAt, id, ...rest] = before.split("|");
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !createdAt || !id || rest.length)
+      throw new HttpError(400, "invalid_cursor", "Not a place in the list");
     statement = env.DB.prepare(
-      `${EXPENSE_SELECT} WHERE e.group_id = ? AND (e.date, e.created_at, e.id) < (?, ?, ?) ${ORDER} LIMIT ?`,
-    ).bind(groupId, after.date, after.created_at, after.id, size + 1);
+      `${EXPENSE_SELECT} WHERE e.group_id = ? AND e.deleted_at IS NULL AND (e.date, e.created_at, e.id) < (?, ?, ?)
+       ${ORDER} LIMIT ?`,
+    ).bind(groupId, date, createdAt, id, size + 1);
   } else {
-    statement = env.DB.prepare(`${EXPENSE_SELECT} WHERE e.group_id = ? ${ORDER} LIMIT ?`).bind(groupId, size + 1);
+    statement = env.DB.prepare(`${EXPENSE_SELECT} WHERE e.group_id = ? AND e.deleted_at IS NULL ${ORDER} LIMIT ?`).bind(
+      groupId,
+      size + 1,
+    );
   }
   const { results } = await statement.all<ExpenseRow>();
   const expenses = results.slice(0, size).map(toExpense);
-  return { expenses, next: results.length > size ? expenses[expenses.length - 1]!.id : null };
+  const last = expenses[expenses.length - 1];
+  return { expenses, next: results.length > size && last ? `${last.date}|${last.createdAt}|${last.id}` : null };
 }
 
 /**
- * Everyone's balance in the group: what they paid minus their shares. Lists every member (in the
- * order they joined), and anyone who has left with a balance that is not 0 (which leaving rules
- * out, but the numbers must add up whatever happened).
+ * Everyone's balance in the group: what they paid minus their shares, in expenses that were not
+ * deleted. Lists every member (in the order they joined), and anyone who has left with a balance
+ * that is not 0 (which leaving rules out, but the numbers must add up whatever happened).
  */
 export async function balances(env: Env, groupId: string): Promise<Balance[]> {
   const { results } = await env.DB.prepare(
     `SELECT u.id, u.name, SUM(b.net) AS net, MIN(b.joined_at) AS joined_at FROM (
-       SELECT paid_by AS user_id, amount AS net, NULL AS joined_at FROM expenses WHERE group_id = ?
+       SELECT paid_by AS user_id, amount AS net, NULL AS joined_at FROM expenses
+         WHERE group_id = ? AND deleted_at IS NULL
        UNION ALL
        SELECT s.user_id, -s.amount, NULL FROM expense_shares s JOIN expenses e ON e.id = s.expense_id
-         WHERE e.group_id = ?
+         WHERE e.group_id = ? AND e.deleted_at IS NULL
        UNION ALL
        SELECT user_id, 0, joined_at FROM group_members WHERE group_id = ?
      ) b JOIN users u ON u.id = b.user_id
@@ -170,4 +209,44 @@ export async function balances(env: Env, groupId: string): Promise<Balance[]> {
     .bind(groupId, groupId, groupId)
     .all<{ id: string; name: string; net: number }>();
   return results.map((r) => ({ userId: r.id, name: r.name, net: r.net }));
+}
+
+/** The expense as the activity log keeps it. */
+export const snapshot = (e: {
+  description: string;
+  amount: number;
+  paidBy: string;
+  date: string;
+  splitMethod: Expense["splitMethod"];
+  splitParams: SplitParams | null;
+  shares: Share[] | Map<string, number>;
+}): ExpenseSnapshot => ({
+  description: e.description,
+  amount: e.amount,
+  paidBy: e.paidBy,
+  date: e.date,
+  splitMethod: e.splitMethod,
+  splitParams: e.splitParams,
+  shares: Object.fromEntries(e.shares instanceof Map ? e.shares : e.shares.map((s) => [s.userId, s.amount])),
+});
+
+/** Two maps of numbers by user id (shares, or a split's parameters) are the same; null is none. */
+const sameById = (a: Record<string, number> | null | undefined, b: Record<string, number> | null | undefined) => {
+  const x = a ?? {};
+  const y = b ?? {};
+  return Object.keys(x).length === Object.keys(y).length && Object.entries(x).every(([id, v]) => y[id] === v);
+};
+
+/** What an edit changes, field by field; null if nothing. */
+export function changeOf(before: ExpenseSnapshot, after: ExpenseSnapshot): ExpenseChange | null {
+  const change: ExpenseChange = { description: after.description, before: {}, after: {} };
+  for (const key of Object.keys(after) as (keyof ExpenseSnapshot)[]) {
+    const same =
+      key === "shares" || key === "splitParams" ? sameById(before[key], after[key]) : before[key] === after[key];
+    if (!same) {
+      (change.before as Record<string, unknown>)[key] = before[key];
+      (change.after as Record<string, unknown>)[key] = after[key];
+    }
+  }
+  return Object.keys(change.after).length ? change : null;
 }
