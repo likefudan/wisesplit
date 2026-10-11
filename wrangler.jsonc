@@ -19,11 +19,16 @@
       "migrations_dir": "migrations"
     }
   ],
+  // Receipt photos. CI creates the bucket on first deploy (scripts/ensure-r2.mjs).
+  "r2_buckets": [{ "binding": "RECEIPTS", "bucket_name": "wisesplit-receipts" }],
+  // Daily clean-up of receipt photos no expense uses any more (scheduled in src/worker/index.ts).
+  "triggers": { "crons": ["17 9 * * *"] },
   "vars": { "SITE_ORIGIN": "https://wisesplit.llmat.dev", "ENVIRONMENT": "production" },
   "routes": [{ "pattern": "wisesplit.llmat.dev", "custom_domain": true }],
   "observability": { "enabled": true },
 
-  // Test site: its own Worker, database and domain; assets and observability are inherited from above.
+  // Test site: its own Worker, database, bucket and domain; assets, observability and the daily
+  // clean-up are inherited from above.
   // Every merge to main lands here; production only changes when a v* release tag is pushed
   // (see .github/workflows/ci.yml).
   "env": {
@@ -38,6 +43,7 @@
           "migrations_dir": "migrations"
         }
       ],
+      "r2_buckets": [{ "binding": "RECEIPTS", "bucket_name": "wisesplit-staging-receipts" }],
       "vars": { "SITE_ORIGIN": "https://staging.wisesplit.llmat.dev", "ENVIRONMENT": "staging" },
       "routes": [{ "pattern": "staging.wisesplit.llmat.dev", "custom_domain": true }]
     }

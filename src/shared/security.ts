@@ -16,8 +16,9 @@ export const CSP = [
   "frame-src https://challenges.cloudflare.com",
   // Inline style attributes.
   "style-src 'self' 'unsafe-inline'",
-  // Google profile pictures come from googleusercontent.com.
-  "img-src 'self' data: https://googleusercontent.com https://*.googleusercontent.com",
+  // Google profile pictures come from googleusercontent.com; blob: is a receipt photo's preview
+  // before it is uploaded.
+  "img-src 'self' data: blob: https://googleusercontent.com https://*.googleusercontent.com",
   "font-src 'self'",
   "connect-src 'self'",
   "object-src 'none'",

@@ -15,9 +15,11 @@ import {
 } from "../groups";
 import { expenseRoutes } from "./expenses";
 import { settlementRoutes } from "./settlements";
+import { receiptRoutes } from "./receipts";
 import type { Env } from "../env";
 import { HttpError, now, readJson, str } from "../http";
 import { randomId, randomToken, sha256 } from "../lib/crypto";
+import { deleteGroupReceipts } from "../receipts";
 
 /** Groups, their members, and invites (the invite links themselves are used in routes/invites.ts). */
 export const groupRoutes = new Hono<AppEnv>();
@@ -25,6 +27,8 @@ groupRoutes.use("*", requireApproved);
 // Expenses and balances: /:id/expenses, /:id/balances. Payments: /:id/payments.
 groupRoutes.route("/:id", expenseRoutes);
 groupRoutes.route("/:id", settlementRoutes);
+// Receipt photos: /:id/expenses/:expenseId/receipt.
+groupRoutes.route("/:id", receiptRoutes);
 
 const notSettled = () => new HttpError(409, "group_not_settled", "Everyone in the group must be settled up first");
 const userNotFound = () => new HttpError(404, "user_not_found", "No approved user has this email");
@@ -162,7 +166,8 @@ groupRoutes.post("/:id/leave", async (c) => {
   return c.body(null, 204);
 });
 
-// Deletes the group, once settled up, with its members, invites, expenses, payments and activity log.
+// Deletes the group, once settled up, with its members, invites, expenses, receipt photos, payments
+// and activity log.
 groupRoutes.post("/:id/delete", async (c) => {
   const me = c.get("user");
   const group = await groupForMember(c.env, c.req.param("id"), me.id);
@@ -175,6 +180,12 @@ groupRoutes.post("/:id/delete", async (c) => {
   if (!deleted) {
     await groupForMember(c.env, group.id, me.id); // deleted meanwhile: 404
     throw notSettled();
+  }
+  // The rows went with the group; the photos are removed here, or else by the daily clean-up.
+  try {
+    await deleteGroupReceipts(c.env, group.id);
+  } catch (err) {
+    console.error("deleting a group's receipts failed:", err);
   }
   return c.body(null, 204);
 });

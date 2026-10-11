@@ -118,12 +118,14 @@ interface ExpenseRow {
   updated_at: string | null;
   version: number;
   shares: string;
+  receipt: string | null;
 }
 
 const EXPENSE_SELECT = `SELECT e.id, e.description, e.amount, e.paid_by, p.name AS paid_by_name, e.date,
     e.split_method, e.split_params, e.created_by, e.created_at, e.updated_at, e.version,
     (SELECT json_group_array(json_object('userId', s.user_id, 'name', u.name, 'amount', s.amount))
-      FROM expense_shares s JOIN users u ON u.id = s.user_id WHERE s.expense_id = e.id) AS shares
+      FROM expense_shares s JOIN users u ON u.id = s.user_id WHERE s.expense_id = e.id) AS shares,
+    (SELECT r.id FROM receipts r WHERE r.expense_id = e.id) AS receipt
   FROM expenses e JOIN users p ON p.id = e.paid_by`;
 
 const ORDER = "ORDER BY e.date DESC, e.created_at DESC, e.id DESC";
@@ -142,6 +144,7 @@ const toExpense = (r: ExpenseRow): Expense => ({
   createdAt: r.created_at,
   updatedAt: r.updated_at,
   version: r.version,
+  receipt: r.receipt,
 });
 
 /** The expense, unless it was deleted. */

@@ -1,6 +1,8 @@
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
+  /** Receipt photos (src/worker/receipts.ts); one bucket per environment. */
+  RECEIPTS: R2Bucket;
   /** Public site address, for links in messages sent without a request (emails, push). */
   SITE_ORIGIN: string;
   /** "production", "staging" (the test site) or "local" (a developer's machine and the browser tests). */

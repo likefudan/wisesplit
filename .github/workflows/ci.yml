@@ -88,6 +88,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: node scripts/resolve-d1.mjs staging
+      - run: node scripts/ensure-r2.mjs staging
       - run: npx wrangler d1 migrations apply DB --remote --env staging
       - run: npx wrangler deploy --env staging
       - name: Copy secrets to the test site
@@ -130,6 +131,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: node scripts/resolve-d1.mjs production
+      - run: node scripts/ensure-r2.mjs production
       - name: Back up the production database
         run: |
           mkdir -p backup

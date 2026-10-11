@@ -63,6 +63,8 @@ export type ActivityEntry = {
   | { action: "settlement.confirmed"; data: PaymentSnapshot }
   | { action: "settlement.declined"; data: PaymentSnapshot }
   | { action: "settlement.withdrawn"; data: PaymentSnapshot }
+  // A receipt photo of the expense `subjectId` (src/worker/routes/receipts.ts).
+  | { action: "receipt.added" | "receipt.replaced" | "receipt.removed"; data: { description: string } }
 );
 
 export interface ActivityPage {

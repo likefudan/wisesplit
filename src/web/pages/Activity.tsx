@@ -144,6 +144,11 @@ function ActivityRow({
         changes = [t("activity.settlement.countsNow")];
       break;
     }
+    case "receipt.added":
+    case "receipt.replaced":
+    case "receipt.removed":
+      text = t(`activity.${e.action}`, { actor, description: e.data.description });
+      break;
     default:
       // Something a newer version of the site logs: this page has no words for it.
       return null;
