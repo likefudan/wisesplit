@@ -80,12 +80,20 @@ export async function startSession<E extends { Bindings: Env }>(c: Context<E>, i
   setCookie(c, sessionCookie(c), raw, { ...cookieOptions(c), expires });
 }
 
-export async function endSession<E extends { Bindings: Env }>(c: Context<E>): Promise<void> {
+/** The SHA-256 of this browser's session cookie, as `sessions.id_hash` stores it; null if none. */
+export async function sessionHash(c: Context<any>): Promise<string | null> {
   const raw = getCookie(c, sessionCookie(c));
-  if (raw)
-    await c.env.DB.prepare("DELETE FROM sessions WHERE id_hash = ?")
-      .bind(await sha256(raw))
-      .run();
+  return raw ? sha256(raw) : null;
+}
+
+/** Signs this browser out, and turns off the push notifications this session turned on. */
+export async function endSession<E extends { Bindings: Env }>(c: Context<E>): Promise<void> {
+  const hash = await sessionHash(c);
+  if (hash)
+    await c.env.DB.batch([
+      c.env.DB.prepare("DELETE FROM sessions WHERE id_hash = ?").bind(hash),
+      c.env.DB.prepare("DELETE FROM push_subscriptions WHERE session_hash = ?").bind(hash),
+    ]);
   deleteCookie(c, sessionCookie(c), cookieOptions(c));
 }
 

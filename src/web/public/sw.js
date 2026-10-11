@@ -17,6 +17,8 @@ self.addEventListener("push", (event) => {
     self.registration.showNotification(message.title || "wisesplit", {
       body: message.body || "",
       tag: message.tag || undefined,
+      // A newer message about the same expense or payment replaces the old one, and still alerts.
+      renotify: Boolean(message.tag),
       icon: staging ? "/icons/staging-icon-192.png" : "/icons/icon-192.png",
       data: { url: message.url || "/" },
     }),

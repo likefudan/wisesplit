@@ -311,8 +311,9 @@ function PushSetting() {
       setOn(next);
     } catch (error) {
       setMessage(error instanceof PushDenied ? { kind: "denied" } : { kind: "error", error });
-      // Off in the browser after a failed "off" (it unsubscribes first), and after a failed "on".
-      setOn(false);
+      // Whatever the browser has now: a failed "on" leaves it off; a failed "off" may have got as
+      // far as unsubscribing (then only telling the server failed, and it stops sending anyway).
+      setOn(await hasPushSubscription().catch(() => on));
     } finally {
       setBusy(false);
     }

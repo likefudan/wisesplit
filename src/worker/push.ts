@@ -4,6 +4,7 @@ import { type Lang, translate } from "../shared/i18n";
 import { type NotificationData, notificationText } from "../shared/notifications";
 import type { Env } from "./env";
 import { HttpError, now } from "./http";
+import { concat } from "./lib/bytes";
 import { fromBase64Url, toBase64Url } from "./lib/crypto";
 
 /**
@@ -49,25 +50,10 @@ const PUSH_HOSTS = [
 
 const enc = new TextEncoder();
 
-function concat(...parts: Uint8Array[]): Uint8Array {
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
-  let at = 0;
-  for (const p of parts) {
-    out.set(p, at);
-    at += p.length;
-  }
-  return out;
-}
-
-async function hmac(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
-  const k = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  return new Uint8Array(await crypto.subtle.sign("HMAC", k, data));
-}
-
-/** HKDF-SHA-256 for one block or less: extract with `salt`, expand with `info` to `length` bytes. */
+/** HKDF-SHA-256 (RFC 5869): `length` bytes from `ikm`, with `salt` and `info`. */
 async function hkdf(salt: Uint8Array, ikm: Uint8Array, info: Uint8Array, length: number): Promise<Uint8Array> {
-  const prk = await hmac(salt, ikm);
-  return (await hmac(prk, concat(info, new Uint8Array([1])))).slice(0, length);
+  const key = await crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
+  return new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt, info }, key, length * 8));
 }
 
 function decodeKey(value: string, length: number): Uint8Array | null {
@@ -129,17 +115,17 @@ export async function encryptPayload(
       256,
     ),
   );
-  const ikm = await hkdf(authSecret, shared, concat(enc.encode("WebPush: info\0"), uaPublic, asPublic), 32);
+  const ikm = await hkdf(authSecret, shared, concat([enc.encode("WebPush: info\0"), uaPublic, asPublic]), 32);
   const cek = await hkdf(salt, ikm, enc.encode("Content-Encoding: aes128gcm\0"), 16);
   const nonce = await hkdf(salt, ikm, enc.encode("Content-Encoding: nonce\0"), 12);
   const aes = await crypto.subtle.importKey("raw", cek, "AES-GCM", false, ["encrypt"]);
   // 0x02 marks the last (here the only) record.
   const sealed = new Uint8Array(
-    await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, aes, concat(plaintext, new Uint8Array([2]))),
+    await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, aes, concat([plaintext, new Uint8Array([2])])),
   );
   const recordSize = new Uint8Array(4);
   new DataView(recordSize.buffer).setUint32(0, 4096);
-  return concat(salt, recordSize, new Uint8Array([asPublic.length]), asPublic, sealed);
+  return concat([salt, recordSize, new Uint8Array([asPublic.length]), asPublic, sealed]);
 }
 
 /** This site's VAPID key (the VAPID_KEY secret, a P-256 private key as JWK), or null if not set up. */
@@ -151,11 +137,18 @@ export function vapidKey(env: Env): { jwk: JsonWebKey; publicKey: string } | nul
     const y = decodeKey(jwk.y ?? "", 32);
     if (jwk.kty !== "EC" || jwk.crv !== "P-256" || !jwk.d || !x || !y) throw new Error("not a P-256 private key");
     // The public key as browsers take it (applicationServerKey): the uncompressed point.
-    return { jwk, publicKey: toBase64Url(concat(new Uint8Array([4]), x, y)) };
+    return { jwk, publicKey: toBase64Url(concat([new Uint8Array([4]), x, y])) };
   } catch (err) {
     console.error("VAPID_KEY is not valid:", err);
     return null;
   }
+}
+
+// The VAPID key, imported once per Worker instance (and again only if the secret changes).
+let imported: { secret: string; key: Promise<CryptoKey | Uint8Array> } | null = null;
+function signingKey(secret: string, jwk: JsonWebKey) {
+  if (imported?.secret !== secret) imported = { secret, key: importJWK(jwk, "ES256") };
+  return imported.key;
 }
 
 type Sender = (sub: PushSubscriptionInput, message: PushMessage) => Promise<"sent" | "gone" | "failed">;
@@ -164,7 +157,7 @@ type Sender = (sub: PushSubscriptionInput, message: PushMessage) => Promise<"sen
 async function sender(env: Env): Promise<Sender | null> {
   const vapid = vapidKey(env);
   if (!vapid) return null;
-  const key = await importJWK(vapid.jwk, "ES256");
+  const key = await signingKey(env.VAPID_KEY!, vapid.jwk);
   // One token per push service (its origin is the token's audience), good for 12 hours.
   const tokens = new Map<string, Promise<string>>();
   const token = (audience: string) => {
@@ -231,7 +224,7 @@ function fairShare<T extends { user_id: string }>(subs: T[], max: number): T[] {
     .map((r) => r.sub);
 }
 
-/** One person to tell, and what they read (as `notify` works it out). */
+/** One person to tell, and what they read (as `notify` works it out; src/worker/notifications.ts). */
 export type PushNote = { userId: string } & NotificationData;
 
 /**
@@ -293,24 +286,31 @@ export async function pushNotes(
 }
 
 /**
- * Turns push on for a browser, as `userId`: moving it from whoever had it before (the same
- * browser, signed in as someone else), but keeping when it was first turned on if it was theirs.
+ * Turns push on for a browser, as `userId` in the session `session`: moving it from whoever had it
+ * before (the same browser, signed in as someone else), but keeping when it was first turned on if
+ * it was theirs. Taking it from someone else needs the browser's own keys, not just its address.
  */
-export async function subscribe(env: Env, userId: string, sub: PushSubscriptionInput): Promise<void> {
-  await env.DB.batch([
+export async function subscribe(
+  env: Env,
+  userId: string,
+  session: string | null,
+  sub: PushSubscriptionInput,
+): Promise<void> {
+  const [saved] = await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO push_subscriptions (endpoint, user_id, p256dh, auth, created_at) VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO push_subscriptions (endpoint, user_id, p256dh, auth, session_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT (endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth,
+         session_hash = excluded.session_hash,
          created_at = CASE WHEN user_id = excluded.user_id THEN created_at ELSE excluded.created_at END
-       -- Someone else may only take it over with the same keys: from the browser itself, not from
-       -- someone who merely saw its address.
-       WHERE user_id = excluded.user_id OR p256dh = excluded.p256dh`,
-    ).bind(sub.endpoint, userId, sub.p256dh, sub.auth, now()),
+       WHERE user_id = excluded.user_id OR (p256dh = excluded.p256dh AND auth = excluded.auth)`,
+    ).bind(sub.endpoint, userId, sub.p256dh, sub.auth, session, now()),
     env.DB.prepare(
       `DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint NOT IN
          (SELECT endpoint FROM push_subscriptions WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?)`,
     ).bind(userId, userId, MAX_PUSH_DEVICES),
   ]);
+  if (!saved?.meta.changes)
+    throw new HttpError(400, "invalid_subscription", "This subscription belongs to another browser");
 }
 
 /** Turns push off for a browser of `userId`'s (nothing if it isn't theirs). */

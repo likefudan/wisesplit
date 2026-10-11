@@ -3,7 +3,6 @@ import type { ExpenseSnapshot } from "../shared/activity";
 import type { Currency } from "../shared/currencies";
 import {
   type AppNotification,
-  type NotificationData,
   type NotificationPage,
   type NotificationSettings,
   type PaymentNote,
@@ -12,7 +11,7 @@ import {
 import type { Env } from "./env";
 import { HttpError, now } from "./http";
 import { randomId } from "./lib/crypto";
-import { pushNotes } from "./push";
+import { type PushNote, pushNotes } from "./push";
 
 /**
  * Something that happened that people should hear about, as the route that did it describes it.
@@ -32,7 +31,7 @@ export type NotifyEvent = { actorId: string } & (
 );
 
 /** One person to tell, and what they read. */
-type Note = { userId: string } & NotificationData;
+type Note = PushNote;
 
 /** Who an expense involves: who paid it and who shares it. */
 const involved = (e: ExpenseSnapshot) => [e.paidBy, ...Object.keys(e.shares)];

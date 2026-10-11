@@ -3,7 +3,7 @@ import { importJWK, jwtVerify } from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fromBase64Url, toBase64Url } from "../src/worker/lib/crypto";
 import { encryptPayload, MAX_PUSH_DEVICES, type PushMessage } from "../src/worker/push";
-import { json, makeUser, ORIGIN, send } from "./helpers";
+import { json, makeUser, ORIGIN, send, signIn } from "./helpers";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -200,7 +200,8 @@ describe("push subscriptions", () => {
 
     // Nor take it over knowing only its address: that needs the browser's own keys.
     const other = await makeBrowser();
-    expect((await post("/api/push/subscribe", ann, { endpoint: shared.endpoint, keys: other.keys })).status).toBe(204);
+    const res = await post("/api/push/subscribe", ann, { endpoint: shared.endpoint, keys: other.keys });
+    expect((await json(res)).error.code).toBe("invalid_subscription");
     expect(await subscriptionsOf(bob.id)).toEqual([shared.endpoint]);
 
     // Ann can't turn off Bob's browser.
@@ -220,6 +221,20 @@ describe("push subscriptions", () => {
     await subscribe(ann, browsers[2]!);
     await subscribe(ann, await makeBrowser());
     expect(await subscriptionsOf(ann.id)).not.toContain(browsers[2]!.endpoint);
+  });
+
+  it("turns push off for the browsers a session turned it on in when it signs out", async () => {
+    const me = await makeUser("approved");
+    const phone = await makeBrowser();
+    await subscribe(me, phone);
+    const laptop = await makeBrowser();
+    const elsewhere = await signIn(me.email, `sub-${me.email}`);
+    expect(
+      (await send("/api/push/subscribe", { cookie: elsewhere, body: { endpoint: laptop.endpoint, keys: laptop.keys } }))
+        .status,
+    ).toBe(204);
+    expect((await send("/api/auth/logout", { cookie: me.cookie, body: {} })).status).toBeLessThan(300);
+    expect(await subscriptionsOf(me.id)).toEqual([laptop.endpoint]);
   });
 
   it("sends a test message, and forgets a browser the push service says is gone", async () => {

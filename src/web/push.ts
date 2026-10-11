@@ -49,7 +49,9 @@ export async function checkPush(publicKey: string): Promise<boolean> {
   const key = sub.options.applicationServerKey;
   // A browser that doesn't say which key the subscription was made with is taken at its word.
   if (key && toBase64Url(key) !== publicKey) {
+    const { endpoint } = sub;
     await sub.unsubscribe();
+    await api("/api/push/unsubscribe", { endpoint }).catch(() => {});
     await turnOnPush(publicKey);
     return true;
   }

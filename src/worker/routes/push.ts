@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { type AppEnv, requireApproved } from "../auth";
+import { type AppEnv, requireApproved, sessionHash } from "../auth";
 import { readJson, str } from "../http";
 import { parseSubscription, pushTest, subscribe, unsubscribe, vapidKey } from "../push";
 
@@ -11,7 +11,8 @@ pushRoutes.use("*", requireApproved);
 pushRoutes.get("/", (c) => c.json({ publicKey: vapidKey(c.env)?.publicKey ?? null }));
 
 pushRoutes.post("/subscribe", async (c) => {
-  await subscribe(c.env, c.get("user").id, parseSubscription(await readJson(c.req.raw)));
+  const sub = parseSubscription(await readJson(c.req.raw));
+  await subscribe(c.env, c.get("user").id, await sessionHash(c), sub);
   return c.body(null, 204);
 });
 

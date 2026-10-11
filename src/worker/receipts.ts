@@ -1,5 +1,6 @@
 import type { Env } from "./env";
 import { HttpError } from "./http";
+import { concat } from "./lib/bytes";
 
 /** Every receipt object's key starts with this, then the group id: see `receiptKey`. */
 const PREFIX = "receipts/";
@@ -34,16 +35,6 @@ export async function readBody(req: Request, max: number): Promise<Uint8Array> {
     chunks.push(value);
   }
   return concat(chunks);
-}
-
-function concat(parts: Uint8Array[]): Uint8Array {
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
-  let at = 0;
-  for (const p of parts) {
-    out.set(p, at);
-    at += p.length;
-  }
-  return out;
 }
 
 /**
