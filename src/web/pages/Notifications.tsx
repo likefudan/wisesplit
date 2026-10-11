@@ -96,7 +96,7 @@ function NotificationList({ me }: { me: User }) {
 
   return (
     <Page title={t("notifications.title")}>
-      <div class="actions">
+      <div class="actions notification-tools">
         {unread > 0 && (
           <button type="button" class="button secondary small" disabled={busy} onClick={readAll}>
             {t("notifications.readAll")}
@@ -159,7 +159,8 @@ function NotificationRow({
   let detail: string | null = null;
   switch (n.kind) {
     case "expense.added":
-      text = t("notify.expense.added", {
+      // Said only when someone other than whoever added it paid.
+      text = t(n.data.paidBy === n.actorId ? "notify.expense.added" : "notify.expense.addedPaidBy", {
         actor,
         description: n.data.description,
         amount: money(n.data.amount),

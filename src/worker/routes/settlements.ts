@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { isPaymentMethod, MAX_PENDING_PAYMENTS } from "../../shared/settlements";
+import { isPaymentMethod, MAX_PENDING_PAYMENTS, type PaymentMethod } from "../../shared/settlements";
 import type { AppEnv } from "../auth";
 import { parseAmountUnits } from "../expenses";
 import { groupForMember, isMember } from "../groups";
@@ -7,6 +7,14 @@ import { HttpError, now, readJson, str } from "../http";
 import { randomId } from "../lib/crypto";
 import { notify } from "../notifications";
 import { paymentById, paymentList } from "../settlements";
+
+/** The parts of a settlements row a decision reports back. */
+interface SettlementRow {
+  from_user: string;
+  to_user: string;
+  amount: number;
+  method: PaymentMethod;
+}
 
 /**
  * Payments that settle up a group, under /api/groups/:id (behind requireApproved there). The payer
@@ -57,7 +65,7 @@ settlementRoutes.post("/payments", async (c) => {
          AND (? = ? OR st = 'confirmed')
          AND (st = 'confirmed'
            OR (SELECT COUNT(*) FROM settlements WHERE group_id = ? AND from_user = ? AND status = 'pending') < ?)
-       RETURNING id`,
+       RETURNING status`,
     ).bind(
       id,
       group.id,
@@ -110,18 +118,17 @@ settlementRoutes.post("/payments", async (c) => {
     // Something changed meanwhile (someone was deactivated or reactivated).
     throw new HttpError(409, "payment_conflict", "Something changed meanwhile; reload and try again");
   }
-  const payment = await paymentById(c.env, group.id, id);
   // A pending payment waits for the payee. (One that counted at once was made with someone
   // deactivated, who can't be told here.)
-  if (payment?.status === "pending")
+  if ((added.results[0] as { status: string }).status === "pending")
     await notify(c.env, {
       kind: "payment.requested",
       actorId: me.id,
       groupId: group.id,
       paymentId: id,
-      payment: { from: payment.fromId, to: payment.toId, amount: payment.amount, method: payment.method },
+      payment: { from, to, amount, method: body.method },
     });
-  return c.json({ payment });
+  return c.json({ payment: await paymentById(c.env, group.id, id) });
 });
 
 /**
@@ -170,7 +177,8 @@ for (const [action, rule] of Object.entries(DECISIONS)) {
          FROM settlements WHERE ${where}`,
       ).bind(randomId(), me.id, `settlement.${rule.status}`, at, ...args),
       c.env.DB.prepare(
-        `UPDATE settlements SET status = ?, decided_at = ?, decided_by = ? WHERE ${where} RETURNING id`,
+        `UPDATE settlements SET status = ?, decided_at = ?, decided_by = ? WHERE ${where}
+         RETURNING from_user, to_user, amount, method`,
       ).bind(rule.status, at, me.id, ...args),
     ]);
     if (!updated?.results.length) {
@@ -181,14 +189,14 @@ for (const [action, rule] of Object.entries(DECISIONS)) {
         throw new HttpError(409, "payment_not_pending", "This payment was already confirmed, declined or withdrawn");
       throw notYours();
     }
-    const payment = (await paymentById(c.env, group.id, paymentId))!;
+    const done = updated.results[0] as SettlementRow;
     await notify(c.env, {
       kind: `payment.${rule.status}` as "payment.confirmed" | "payment.declined" | "payment.withdrawn",
       actorId: me.id,
       groupId: group.id,
       paymentId,
-      payment: { from: payment.fromId, to: payment.toId, amount: payment.amount, method: payment.method },
+      payment: { from: done.from_user, to: done.to_user, amount: done.amount, method: done.method },
     });
-    return c.json({ payment });
+    return c.json({ payment: await paymentById(c.env, group.id, paymentId) });
   });
 }

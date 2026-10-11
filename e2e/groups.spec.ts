@@ -471,7 +471,7 @@ test("the bell tells a friend they were added, and an expense they are in", asyn
   await friend.reload();
   await expect(friend.getByRole("link", { name: "Notifications, 1 unread" })).toBeVisible();
   await expect(friend.getByText("Your share: $10.00")).toBeVisible();
-  await friend.getByText("Owner Nell added “Firewood” ($20.00), paid by Owner Nell").click();
+  await friend.getByText("Owner Nell added “Firewood” ($20.00)").click();
   await expect(friend.getByRole("heading", { name: "Cabin" })).toBeVisible();
   await expect(friend.getByRole("link", { name: "Notifications", exact: true })).toBeVisible();
 });
