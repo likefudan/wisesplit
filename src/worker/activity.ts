@@ -11,7 +11,10 @@ interface LogRow {
   created_at: string;
 }
 
-/** Everyone an entry mentions, by user id: who did it, who it is about, and who is in the expense. */
+/**
+ * Everyone an entry mentions, by user id: who did it, who it is about, and who is in the expense
+ * or payment.
+ */
 function mentioned(entry: ActivityEntry): string[] {
   const ids = [entry.actorId];
   const fromExpense = (e: Partial<ExpenseSnapshot>) => {
@@ -30,6 +33,12 @@ function mentioned(entry: ActivityEntry): string[] {
     case "member.joined":
       ids.push(entry.data.invitedBy);
       if (entry.subjectId) ids.push(entry.subjectId);
+      break;
+    case "settlement.added":
+    case "settlement.confirmed":
+    case "settlement.declined":
+    case "settlement.withdrawn":
+      ids.push(entry.data.from, entry.data.to);
       break;
     case "member.added":
     case "member.left":

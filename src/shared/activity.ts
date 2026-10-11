@@ -1,6 +1,7 @@
 /** A group's activity log, as the API shows it (GET /api/groups/:id/activity). */
 
 import type { SplitMethod, SplitParams } from "./expenses";
+import type { PaymentMethod, PaymentStatus } from "./settlements";
 
 /** Log entries per page of a group's activity. */
 export const ACTIVITY_PAGE = 20;
@@ -28,9 +29,17 @@ export interface ExpenseChange {
   after: Partial<ExpenseSnapshot>;
 }
 
+/** A payment as the log keeps it (src/worker/routes/settlements.ts). */
+export interface PaymentSnapshot {
+  from: string;
+  to: string;
+  amount: number;
+  method: PaymentMethod;
+}
+
 /**
  * One thing that happened in a group. `actorId` did it; `subjectId` is what it is about (the
- * expense, or the member who joined, left or was removed).
+ * expense, the payment, or the member who joined, left or was removed).
  */
 export type ActivityEntry = {
   id: string;
@@ -49,6 +58,11 @@ export type ActivityEntry = {
   | { action: "member.left"; data: null }
   // Taken out by the owner.
   | { action: "member.removed"; data: null }
+  // Recorded: pending, or confirmed at once when the other side is deactivated.
+  | { action: "settlement.added"; data: PaymentSnapshot & { status: PaymentStatus } }
+  | { action: "settlement.confirmed"; data: PaymentSnapshot }
+  | { action: "settlement.declined"; data: PaymentSnapshot }
+  | { action: "settlement.withdrawn"; data: PaymentSnapshot }
   // A receipt photo of the expense `subjectId` (src/worker/routes/receipts.ts).
   | { action: "receipt.added" | "receipt.replaced" | "receipt.removed"; data: { description: string } }
 );

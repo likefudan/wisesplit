@@ -14,6 +14,7 @@ import {
   unsettledArgs,
 } from "../groups";
 import { expenseRoutes } from "./expenses";
+import { settlementRoutes } from "./settlements";
 import { receiptRoutes } from "./receipts";
 import type { Env } from "../env";
 import { HttpError, now, readJson, str } from "../http";
@@ -23,8 +24,9 @@ import { deleteGroupReceipts } from "../receipts";
 /** Groups, their members, and invites (the invite links themselves are used in routes/invites.ts). */
 export const groupRoutes = new Hono<AppEnv>();
 groupRoutes.use("*", requireApproved);
-// Expenses and balances: /:id/expenses, /:id/balances.
+// Expenses and balances: /:id/expenses, /:id/balances. Payments: /:id/payments.
 groupRoutes.route("/:id", expenseRoutes);
+groupRoutes.route("/:id", settlementRoutes);
 // Receipt photos: /:id/expenses/:expenseId/receipt.
 groupRoutes.route("/:id", receiptRoutes);
 
@@ -164,8 +166,8 @@ groupRoutes.post("/:id/leave", async (c) => {
   return c.body(null, 204);
 });
 
-// Deletes the group, once settled up, with its members, invites, expenses, receipt photos and
-// activity log.
+// Deletes the group, once settled up, with its members, invites, expenses, receipt photos, payments
+// and activity log.
 groupRoutes.post("/:id/delete", async (c) => {
   const me = c.get("user");
   const group = await groupForMember(c.env, c.req.param("id"), me.id);

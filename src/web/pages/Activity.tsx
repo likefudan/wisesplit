@@ -130,6 +130,20 @@ function ActivityRow({
     case "member.removed":
       text = t("activity.member.removed", { actor, name: name(e.subjectId) });
       break;
+    case "settlement.added":
+    case "settlement.confirmed":
+    case "settlement.declined":
+    case "settlement.withdrawn": {
+      const params = { actor, from: name(e.data.from), to: name(e.data.to), amount: money(e.data.amount) };
+      // The payee confirming is the usual case; the payer does when the payee was deactivated.
+      text =
+        e.action === "settlement.confirmed" && e.actorId === e.data.to
+          ? t("activity.settlement.received", params)
+          : t(`activity.${e.action}`, params);
+      if (e.action === "settlement.added" && e.data.status === "confirmed")
+        changes = [t("activity.settlement.countsNow")];
+      break;
+    }
     case "receipt.added":
     case "receipt.replaced":
     case "receipt.removed":

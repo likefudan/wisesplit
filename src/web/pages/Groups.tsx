@@ -9,6 +9,7 @@ import { useI18n } from "../i18n";
 import { RequireUser } from "../RequireUser";
 import { ActivityList } from "./Activity";
 import { Balances, ExpenseList } from "./Expenses";
+import { Payments } from "./Payments";
 import type { User } from "../session";
 
 /** The signed-in user's groups, on the front page. */
@@ -137,7 +138,8 @@ function GroupView({ id, me }: { id: string; me: User }) {
   // Removing a member, leaving or deleting: what failed, shown next to the member list.
   const [actionError, setActionError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
-  // Counts the expenses deleted (or found changed) on this page.
+  // Counts the expenses deleted (or found changed) and the payments confirmed, declined or
+  // withdrawn on this page.
   const [changes, setChanges] = useState(0);
 
   useEffect(() => {
@@ -165,8 +167,8 @@ function GroupView({ id, me }: { id: string; me: User }) {
     );
 
   const isOwner = group.ownerId === me.id;
-  // Who is in the group and how many expenses were deleted here: when either changes, the balances
-  // and the activity are loaded again.
+  // Who is in the group and how many expenses or payments changed here: when either changes, the
+  // balances, payments and activity are loaded again.
   const refresh = `${group.members.map((m) => m.id).join()}/${changes}`;
   const path = `/api/groups/${encodeURIComponent(group.id)}`;
 
@@ -213,6 +215,7 @@ function GroupView({ id, me }: { id: string; me: User }) {
       <p class="muted">{t("group.currency", { currency: currencyLabel(group.currency, lang) })}</p>
 
       <Balances key={refresh} group={group} me={me} />
+      <Payments group={group} me={me} refresh={refresh} onChange={() => setChanges((n) => n + 1)} />
       <ExpenseList group={group} me={me} onChange={() => setChanges((n) => n + 1)} />
 
       <section>

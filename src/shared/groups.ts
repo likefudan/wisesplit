@@ -26,6 +26,8 @@ export interface GroupMember {
   picture: string | null;
   /** Deactivated by the site admin: still listed, since their records stay. */
   deactivated: boolean;
+  /** Their Venmo username, for paying them back with a Venmo link; null when they have none. */
+  venmo: string | null;
   joinedAt: string;
 }
 
