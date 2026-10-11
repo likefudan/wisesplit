@@ -17,7 +17,6 @@ async function makeGroup(names: string[], currency = "USD") {
   for (const p of people.slice(1))
     expect((await post(`/api/groups/${group.id}/members`, owner.cookie, { email: p.email })).status).toBe(200);
   // Being added is a notification of its own; start each test from none.
-  for (const p of people) await post("/api/notifications/read-all", p.cookie);
   await env.DB.prepare("DELETE FROM notifications WHERE group_id = ?").bind(group.id).run();
   return { id: group.id as string, people };
 }
