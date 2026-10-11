@@ -99,7 +99,9 @@ jobs:
           TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
           TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
           ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          # Its own key (best a separate Resend account), so the test site can't use up the live
+          # site's 100 emails a day.
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY_STAGING }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           TEST_LOGIN_SECRET: ${{ secrets.TEST_LOGIN_SECRET_STAGING }}
       - name: Smoke test the test site

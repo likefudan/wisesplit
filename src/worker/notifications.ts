@@ -184,8 +184,8 @@ async function email(env: Env, event: NotifyEvent, notes: Note[]): Promise<void>
       const note = byUser.get(person.id);
       return (note && notificationEmail(env, person, note, group, names)) ?? [];
     });
-    const signup = event.kind === "signup.approved" || event.kind === "signup.rejected";
-    await sendEmails(env, emails, signup ? EMAILS_PER_DAY : EMAILS_PER_DAY - SIGNUP_RESERVE);
+    // Everyone else can also read it under the bell.
+    await sendEmails(env, emails, event.kind === "signup.rejected" ? EMAILS_PER_DAY : EMAILS_PER_DAY - SIGNUP_RESERVE);
   } catch (err) {
     console.error("emailing failed:", event.kind, err);
   }

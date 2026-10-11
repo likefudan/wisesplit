@@ -15,13 +15,14 @@ export interface Email {
 /** Whether this site can send email: Resend's key and a sender address are both set. */
 export const canEmail = (env: Env) => !!(env.RESEND_API_KEY && env.EMAIL_FROM);
 
-// Addresses that can't receive mail (RFC 2606: the test logins use them); sending would only bounce.
-const UNDELIVERABLE = /(^|\.)(example\.(com|net|org)|example|test|invalid|localhost)$/i;
+// Addresses that can't receive mail (RFC 2606, which the test logins use, and local-only names);
+// sending would only bounce.
+const UNDELIVERABLE = /(^|\.)(example\.(com|net|org)|example|test|invalid|localhost|local|internal)$/i;
 
 /** Emails a day that Resend's free tier sends. */
 export const EMAILS_PER_DAY = 100;
 
-/** Of those, kept for answers to sign-ups: a rejected applicant can be told no other way. */
+/** Of those, kept for telling applicants they were rejected: they can be told no other way. */
 export const SIGNUP_RESERVE = 10;
 
 /**
@@ -78,8 +79,12 @@ export async function sendEmails(env: Env, emails: Email[], limit: number): Prom
       return 0;
     }
     const { errors } = (await res.json().catch(() => ({}))) as { errors?: unknown[] };
-    if (errors?.length) console.error("some emails not sent:", JSON.stringify(errors).slice(0, 500));
-    return n - (errors?.length ?? 0);
+    const refused = errors?.length ?? 0;
+    if (refused) {
+      console.error("some emails not sent:", JSON.stringify(errors).slice(0, 500));
+      await env.DB.prepare("UPDATE email_days SET count = MAX(0, count - ?) WHERE day = ?").bind(refused, day).run();
+    }
+    return n - refused;
   } catch (err) {
     console.error("emails not sent:", err);
     return 0;

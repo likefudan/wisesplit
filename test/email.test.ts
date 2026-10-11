@@ -186,10 +186,18 @@ describe("email notifications", () => {
     const second = await post(`/api/groups/${id}/expenses`, ann.cookie, expenseBody(ann, 1000, [ann, bob, cat]));
     expect(second.status).toBe(200);
     expect(errors).toHaveBeenCalledWith("emails not sent:", expect.any(TypeError));
-    expect(await kindsOf(bob)).toEqual(["expense.added", "expense.added"]);
+    vi.mocked(globalThis.fetch).mockRestore();
+
+    // … or takes some and refuses others, which then don't count for the day.
+    await env.DB.prepare("DELETE FROM email_days").run();
+    mockResend(async () => Response.json({ data: [{ id: "e1" }], errors: [{ index: 1, message: "Invalid `to`" }] }));
+    await post(`/api/groups/${id}/expenses`, ann.cookie, expenseBody(ann, 1000, [ann, bob, cat]));
+    expect(errors).toHaveBeenCalledWith("some emails not sent:", expect.stringContaining("Invalid"));
+    expect(await env.DB.prepare("SELECT count FROM email_days").first("count")).toBe(1);
+    expect(await kindsOf(bob)).toEqual(["expense.added", "expense.added", "expense.added"]);
   });
 
-  it("keeps within the day's allowance, holding some back for sign-up answers", async () => {
+  it("keeps within the day's allowance, holding some back for rejected applicants", async () => {
     const ann = await person("Ann");
     const bob = await person("Bob");
     const cat = await person("Cat");
@@ -205,7 +213,7 @@ describe("email notifications", () => {
     expect(sent).toHaveLength(2);
     expect(await used()).toBe(2);
 
-    // One short of the group allowance: an expense for two more is not emailed at all.
+    // One short of the everyday allowance: an expense for two more is not emailed at all.
     await env.DB.prepare("UPDATE email_days SET count = ? WHERE day = ?")
       .bind(EMAILS_PER_DAY - SIGNUP_RESERVE - 1, today)
       .run();
@@ -215,12 +223,19 @@ describe("email notifications", () => {
     expect(warn).toHaveBeenCalledWith("daily email limit reached; 2 not sent");
     expect(await kindsOf(bob)).toEqual(["expense.added", "expense.added"]);
 
-    // A sign-up answer may still use what was held back.
+    // Telling someone they were rejected may still use what was held back; an approval may not.
     const boss = await admin();
-    const applicant = await person("Dee", "en", "pending");
-    await post(`/api/admin/users/${applicant.id}/approve`, boss.cookie);
-    expect(sent.at(-1)!.to).toEqual([applicant.email]);
+    const yes = await person("Dee", "en", "pending");
+    const no = await person("Eve", "en", "pending");
+    await post(`/api/admin/users/${yes.id}/approve`, boss.cookie);
+    expect(sent.at(-1)!.to).toEqual([yes.email]);
     expect(await used()).toBe(EMAILS_PER_DAY - SIGNUP_RESERVE);
+    const other = await person("Fay", "en", "pending");
+    await post(`/api/admin/users/${other.id}/approve`, boss.cookie);
+    expect(sent).toHaveLength(3);
+    await post(`/api/admin/users/${no.id}/reject`, boss.cookie);
+    expect(sent.at(-1)!.to).toEqual([no.email]);
+    expect(await used()).toBe(EMAILS_PER_DAY - SIGNUP_RESERVE + 1);
   });
 
   it("sends after the response when the request allows it", async () => {
