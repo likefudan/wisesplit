@@ -5,6 +5,7 @@ import { parseAmountUnits } from "../expenses";
 import { groupForMember, isMember } from "../groups";
 import { HttpError, now, readJson, str } from "../http";
 import { randomId } from "../lib/crypto";
+import { notify } from "../notifications";
 import { paymentById, paymentList } from "../settlements";
 
 /**
@@ -109,7 +110,18 @@ settlementRoutes.post("/payments", async (c) => {
     // Something changed meanwhile (someone was deactivated or reactivated).
     throw new HttpError(409, "payment_conflict", "Something changed meanwhile; reload and try again");
   }
-  return c.json({ payment: await paymentById(c.env, group.id, id) });
+  const payment = await paymentById(c.env, group.id, id);
+  // A pending payment waits for the payee. (One that counted at once was made with someone
+  // deactivated, who can't be told here.)
+  if (payment?.status === "pending")
+    await notify(c.env, {
+      kind: "payment.requested",
+      actorId: me.id,
+      groupId: group.id,
+      paymentId: id,
+      payment: { from: payment.fromId, to: payment.toId, amount: payment.amount, method: payment.method },
+    });
+  return c.json({ payment });
 });
 
 /**
@@ -169,6 +181,14 @@ for (const [action, rule] of Object.entries(DECISIONS)) {
         throw new HttpError(409, "payment_not_pending", "This payment was already confirmed, declined or withdrawn");
       throw notYours();
     }
-    return c.json({ payment: await paymentById(c.env, group.id, paymentId) });
+    const payment = (await paymentById(c.env, group.id, paymentId))!;
+    await notify(c.env, {
+      kind: `payment.${rule.status}` as "payment.confirmed" | "payment.declined" | "payment.withdrawn",
+      actorId: me.id,
+      groupId: group.id,
+      paymentId,
+      payment: { from: payment.fromId, to: payment.toId, amount: payment.amount, method: payment.method },
+    });
+    return c.json({ payment });
   });
 }

@@ -153,6 +153,27 @@ body {
   font-size: 14px;
 }
 
+.bell-link {
+  position: relative;
+  display: flex;
+  color: var(--text);
+}
+
+.bell-count {
+  position: absolute;
+  top: -6px;
+  left: 12px;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--error);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
+
 .avatar-link {
   display: flex;
   border-radius: 50%;
@@ -532,4 +553,30 @@ h2 {
 .activity-changes {
   margin: 0;
   padding-left: 20px;
+}
+
+.notification-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.notification {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.notification.unread {
+  background: var(--surface);
+  border-left: 3px solid var(--accent);
+}
+
+.notification.unread .notification-text {
+  font-weight: 600;
 }

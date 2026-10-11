@@ -21,7 +21,8 @@
   ],
   // Receipt photos. CI creates the bucket on first deploy (scripts/ensure-r2.mjs).
   "r2_buckets": [{ "binding": "RECEIPTS", "bucket_name": "wisesplit-receipts" }],
-  // Daily clean-up of receipt photos no expense uses any more (scheduled in src/worker/index.ts).
+  // Daily clean-up of receipt photos no expense uses any more, and of old notifications
+  // (scheduled in src/worker/index.ts).
   "triggers": { "crons": ["17 9 * * *"] },
   "vars": { "SITE_ORIGIN": "https://wisesplit.llmat.dev", "ENVIRONMENT": "production" },
   "routes": [{ "pattern": "wisesplit.llmat.dev", "custom_domain": true }],

@@ -443,3 +443,35 @@ test("record a cash payment in a non-dollar group, and the payee declines it", a
   );
   await expect(owner.locator(".balance-row").filter({ hasText: "Cash Cal" })).toContainText("settled up");
 });
+
+test("the bell tells a friend they were added, and an expense they are in", async ({ browser }) => {
+  const owner = await approvedUser(browser, unique("bell-owner"), "Owner Nell");
+  const friendEmail = unique("bell-friend");
+  const friend = await approvedUser(browser, friendEmail, "Friend Bo");
+  await createGroup(owner, "Cabin", "USD");
+  await owner.getByLabel("Their Google email").fill(friendEmail);
+  await owner.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(member(owner, "Friend Bo")).toBeVisible();
+
+  // Approved, then added to the group.
+  await friend.goto("/");
+  await friend.getByRole("link", { name: "Notifications, 2 unread" }).click();
+  await expect(friend.getByRole("heading", { name: "Notifications" })).toBeVisible();
+  await expect(friend.getByText("Owner Nell added you to the group")).toBeVisible();
+  await expect(friend.getByText("Your sign-up was approved. Welcome!")).toBeVisible();
+  await friend.getByRole("button", { name: "Mark all as read" }).click();
+  await expect(friend.getByRole("link", { name: "Notifications", exact: true })).toBeVisible();
+
+  // Opening one marks it read and goes to its group.
+  await owner.getByRole("link", { name: "Add expense" }).click();
+  await owner.getByLabel("Description").fill("Firewood");
+  await owner.getByLabel("Amount (USD)").fill("20");
+  await owner.getByRole("button", { name: "Save expense" }).click();
+  await expect(expense(owner, "Firewood")).toBeVisible();
+  await friend.reload();
+  await expect(friend.getByRole("link", { name: "Notifications, 1 unread" })).toBeVisible();
+  await expect(friend.getByText("Your share: $10.00")).toBeVisible();
+  await friend.getByText("Owner Nell added “Firewood” ($20.00), paid by Owner Nell").click();
+  await expect(friend.getByRole("heading", { name: "Cabin" })).toBeVisible();
+  await expect(friend.getByRole("link", { name: "Notifications", exact: true })).toBeVisible();
+});

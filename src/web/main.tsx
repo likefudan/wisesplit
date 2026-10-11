@@ -8,6 +8,7 @@ import { Home } from "./pages/Home";
 import { Invite } from "./pages/Invite";
 import { NewPayment } from "./pages/Payments";
 import { NotFound } from "./pages/NotFound";
+import { Notifications, NotificationSettingsPage } from "./pages/Notifications";
 import { Profile } from "./pages/Profile";
 import "./styles.css";
 
@@ -18,6 +19,8 @@ function App() {
         <Route path="/" component={Home} />
         <Route path="/login" component={Home} />
         <Route path="/profile" component={Profile} />
+        <Route path="/notifications" component={Notifications} />
+        <Route path="/notifications/settings" component={NotificationSettingsPage} />
         <Route path="/groups/new" component={NewGroup} />
         <Route path="/groups/:id" component={GroupPage} />
         <Route path="/groups/:id/expenses/new" component={NewExpense} />

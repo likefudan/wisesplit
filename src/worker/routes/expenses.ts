@@ -9,6 +9,7 @@ import { balances, changeOf, expenseById, expensePage, parseNewExpense, snapshot
 import { groupForMember } from "../groups";
 import { pendingByPair } from "../settlements";
 import { HttpError, now, readJson } from "../http";
+import { notify } from "../notifications";
 import { deleteObjects } from "../receipts";
 import { randomId } from "../lib/crypto";
 
@@ -95,6 +96,13 @@ expenseRoutes.post("/expenses", async (c) => {
     await groupForMember(c.env, group.id, me.id); // the one adding it has left: 404
     throw notInGroup();
   }
+  await notify(c.env, {
+    kind: "expense.added",
+    actorId: me.id,
+    groupId: group.id,
+    expenseId: id,
+    expense: snapshot(e),
+  });
   return c.json({ expense: await expenseById(c.env, group.id, id) });
 });
 
@@ -224,6 +232,7 @@ expenseRoutes.post("/expenses/:expenseId", async (c) => {
     ),
   ]);
   if (!results.at(-1)?.results.length) await whyNot(c.env, group.id, me.id, id, version, people, before);
+  await notify(c.env, { kind: "expense.edited", actorId: me.id, groupId: group.id, expenseId: id, before, after });
   return c.json({ expense: await expenseById(c.env, group.id, id) });
 });
 
@@ -253,6 +262,7 @@ expenseRoutes.post("/expenses/:expenseId/delete", async (c) => {
     ).bind(id, id, at, me.id),
   ]);
   if (!deleted?.results.length) await whyNot(c.env, group.id, me.id, id, version, people, before);
+  await notify(c.env, { kind: "expense.deleted", actorId: me.id, groupId: group.id, expenseId: id, expense: before });
   await deleteObjects(
     c.env,
     (receipt?.results as { object_key: string }[] | undefined)?.map((r) => r.object_key) ?? [],

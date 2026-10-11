@@ -19,6 +19,7 @@ import { receiptRoutes } from "./receipts";
 import type { Env } from "../env";
 import { HttpError, now, readJson, str } from "../http";
 import { randomId, randomToken, sha256 } from "../lib/crypto";
+import { notify } from "../notifications";
 import { deleteGroupReceipts } from "../receipts";
 
 /** Groups, their members, and invites (the invite links themselves are used in routes/invites.ts). */
@@ -111,6 +112,7 @@ groupRoutes.post("/:id/members", async (c) => {
     await groupForMember(c.env, group.id, me.id);
     throw userNotFound();
   }
+  await notify(c.env, { kind: "member.added", actorId: me.id, groupId: group.id, userId: user.id });
   return c.json({ group: await groupDetail(c.env, group), added: user.id });
 });
 
