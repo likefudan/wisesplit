@@ -1,14 +1,8 @@
+import { toBase64Url } from "../../shared/base64url";
+
+export { fromBase64Url, toBase64Url } from "../../shared/base64url";
+
 const enc = new TextEncoder();
-
-export function toBase64Url(bytes: Uint8Array): string {
-  let s = "";
-  for (const b of bytes) s += String.fromCharCode(b);
-  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-export function fromBase64Url(s: string): Uint8Array {
-  return Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0));
-}
 
 /** A 32-byte random token, base64url (43 characters). */
 export function randomToken(): string {

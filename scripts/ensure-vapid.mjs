@@ -2,29 +2,28 @@
 // P-256 private key as JWK) if it has none yet. A key it already has is never replaced: every
 // browser's push subscription is tied to it. Each environment gets its own.
 // Usage: node scripts/ensure-vapid.mjs [production|staging]
-import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { envArgs, putSecrets, targetEnvironment } from "./secrets.mjs";
 
-const target = process.argv[2] ?? "production";
-if (!["production", "staging"].includes(target)) throw new Error(`unknown environment ${target}`);
-const envArgs = target === "staging" ? ["--env", "staging"] : [];
+const target = targetEnvironment();
 
-const list = spawnSync("npx", ["wrangler", "secret", "list", "--format", "json", ...envArgs], { encoding: "utf8" });
+const list = spawnSync("npx", ["wrangler", "secret", "list", "--format", "json", ...envArgs(target)], {
+  encoding: "utf8",
+});
 if (list.error) throw list.error;
-// Only a list that was read for sure may lead to a new key; otherwise stop rather than risk replacing one.
-const json = list.stdout.slice(list.stdout.indexOf("["), list.stdout.lastIndexOf("]") + 1);
-let names;
-try {
-  names = JSON.parse(json).map((s) => s.name);
-} catch {
+// Only a list read for sure may lead to a new key; otherwise stop rather than risk replacing one.
+// The JSON is the array on stdout (a line starting "[{" or "[]"), whatever wrangler prints around it.
+let names = null;
+const start = list.stdout.search(/^\s*\[\s*(\{|\])/m);
+if (list.status === 0 && start >= 0)
+  try {
+    names = JSON.parse(list.stdout.slice(start)).map((s) => s.name);
+  } catch {
+    // Reported below.
+  }
+if (!names) {
   console.error(`${list.stdout}${list.stderr}`);
-  console.error("::error::Could not list the Worker's secrets, so the VAPID key was not checked");
-  process.exit(1);
-}
-if (list.status !== 0) {
-  console.error(list.stderr);
+  console.error("::error::Could not list the Worker's secrets, so its VAPID key was not checked");
   process.exit(1);
 }
 if (names.includes("VAPID_KEY")) {
@@ -34,12 +33,5 @@ if (names.includes("VAPID_KEY")) {
 
 const { privateKey } = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign"]);
 const { kty, crv, x, y, d } = await crypto.subtle.exportKey("jwk", privateKey);
-const dir = mkdtempSync(join(tmpdir(), "vapid-"));
-const file = join(dir, "secrets.json");
-try {
-  writeFileSync(file, JSON.stringify({ VAPID_KEY: JSON.stringify({ kty, crv, x, y, d }) }), { mode: 0o600 });
-  execFileSync("npx", ["wrangler", "secret", "bulk", file, ...envArgs], { stdio: "inherit" });
-  console.log(`Gave the ${target} Worker a new VAPID key`);
-} finally {
-  rmSync(dir, { recursive: true, force: true });
-}
+putSecrets(target, { VAPID_KEY: JSON.stringify({ kty, crv, x, y, d }) });
+console.log(`Gave the ${target} Worker a new VAPID key`);

@@ -214,6 +214,23 @@ async function forget(env: Env, endpoints: string[]) {
       .run();
 }
 
+/**
+ * At most `max` of `subs` (newest first), shared out fairly: everyone's newest browser, then
+ * everyone's second newest, and so on.
+ */
+function fairShare<T extends { user_id: string }>(subs: T[], max: number): T[] {
+  const seen = new Map<string, number>();
+  const ranked = subs.map((sub, i) => {
+    const rank = seen.get(sub.user_id) ?? 0;
+    seen.set(sub.user_id, rank + 1);
+    return { sub, rank, i };
+  });
+  return ranked
+    .sort((a, b) => a.rank - b.rank || a.i - b.i)
+    .slice(0, max)
+    .map((r) => r.sub);
+}
+
 /** One person to tell, and what they read (as `notify` works it out). */
 export type PushNote = { userId: string } & NotificationData;
 
@@ -239,8 +256,8 @@ export async function pushNotes(
         `SELECT s.endpoint, s.p256dh, s.auth, s.user_id, u.lang FROM push_subscriptions s JOIN users u ON u.id = s.user_id
          WHERE s.user_id IN (SELECT value FROM json_each(?)) AND u.status = 'approved'
            AND (? IS NULL OR EXISTS (SELECT 1 FROM group_members WHERE group_id = ? AND user_id = s.user_id))
-         ORDER BY s.created_at DESC LIMIT ?`,
-      ).bind(JSON.stringify(readers), event.groupId, event.groupId, MAX_PUSHES),
+         ORDER BY s.created_at DESC`,
+      ).bind(JSON.stringify(readers), event.groupId, event.groupId),
       env.DB.prepare("SELECT id, name FROM users WHERE id IN (SELECT value FROM json_each(?))").bind(
         JSON.stringify([...mentioned]),
       ),
@@ -250,22 +267,24 @@ export async function pushNotes(
     const group = (groups!.results as { name: string; currency: Currency }[])[0] ?? null;
     const gone: string[] = [];
     await Promise.all(
-      (subs!.results as (PushSubscriptionInput & { user_id: string; lang: Lang })[]).map(async (sub) => {
-        const note = notes.find((n) => n.userId === sub.user_id)!;
-        const said = notificationText({ ...note, actorId: event.actorId, group }, sub.lang, (id) =>
-          id === sub.user_id
-            ? translate(sub.lang, "notifications.you")
-            : (id && names.get(id)) || translate(sub.lang, "activity.someone"),
-        );
-        if (!said) return;
-        const message: PushMessage = {
-          title: group?.name ?? translate(sub.lang, "app.name"),
-          body: said.detail ? `${said.text}\n${said.detail}` : said.text,
-          url: event.groupId ? `/groups/${encodeURIComponent(event.groupId)}` : "/",
-          tag: event.subjectId ?? event.groupId ?? note.kind,
-        };
-        if ((await send(sub, message)) === "gone") gone.push(sub.endpoint);
-      }),
+      fairShare(subs!.results as (PushSubscriptionInput & { user_id: string; lang: Lang })[], MAX_PUSHES).map(
+        async (sub) => {
+          const note = notes.find((n) => n.userId === sub.user_id)!;
+          const said = notificationText({ ...note, actorId: event.actorId, group }, sub.lang, (id) =>
+            id === sub.user_id
+              ? translate(sub.lang, "notifications.you")
+              : (id && names.get(id)) || translate(sub.lang, "activity.someone"),
+          );
+          if (!said) return;
+          const message: PushMessage = {
+            title: group?.name ?? translate(sub.lang, "app.name"),
+            body: said.detail ? `${said.text}\n${said.detail}` : said.text,
+            url: event.groupId ? `/groups/${encodeURIComponent(event.groupId)}` : "/",
+            tag: event.subjectId ?? event.groupId ?? note.kind,
+          };
+          if ((await send(sub, message)) === "gone") gone.push(sub.endpoint);
+        },
+      ),
     );
     await forget(env, gone);
   } catch (err) {
@@ -273,13 +292,19 @@ export async function pushNotes(
   }
 }
 
-/** Turns push on for a browser, as `userId` (moving it from whoever had it before). */
+/**
+ * Turns push on for a browser, as `userId`: moving it from whoever had it before (the same
+ * browser, signed in as someone else), but keeping when it was first turned on if it was theirs.
+ */
 export async function subscribe(env: Env, userId: string, sub: PushSubscriptionInput): Promise<void> {
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO push_subscriptions (endpoint, user_id, p256dh, auth, created_at) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT (endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth,
-         created_at = excluded.created_at`,
+         created_at = CASE WHEN user_id = excluded.user_id THEN created_at ELSE excluded.created_at END
+       -- Someone else may only take it over with the same keys: from the browser itself, not from
+       -- someone who merely saw its address.
+       WHERE user_id = excluded.user_id OR p256dh = excluded.p256dh`,
     ).bind(sub.endpoint, userId, sub.p256dh, sub.auth, now()),
     env.DB.prepare(
       `DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint NOT IN

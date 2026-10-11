@@ -29,14 +29,17 @@ self.addEventListener("notificationclick", (event) => {
   if (url.origin !== self.location.origin) return;
   event.waitUntil(
     (async () => {
-      const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-      // An open tab of the site goes to the page; otherwise a new one opens there.
+      const windows = await self.clients.matchAll({ type: "window" });
+      // An open tab of the site goes to the page; otherwise (or if that tab can't be sent there,
+      // as one the service worker doesn't control yet) a new one opens there.
       for (const client of windows)
-        if (new URL(client.url).origin === url.origin && "focus" in client) {
-          await client.focus();
-          if ("navigate" in client) await client.navigate(url.href).catch(() => {});
-          return;
-        }
+        if (new URL(client.url).origin === url.origin && "navigate" in client)
+          try {
+            await (await client.navigate(url.href))?.focus();
+            return;
+          } catch {
+            // Try the next one.
+          }
       await self.clients.openWindow(url.href);
     })(),
   );

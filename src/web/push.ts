@@ -1,3 +1,4 @@
+import { fromBase64Url, toBase64Url } from "../shared/base64url";
 import { api } from "./api";
 
 // Push notifications in this browser: the service worker (public/sw.js) shows them, and the
@@ -29,21 +30,13 @@ export function pushSupport(): "ok" | "ios-install" | "unsupported" {
 /** The browser said no to notifications (now, or earlier, for this site). */
 export class PushDenied extends Error {}
 
-function toBase64Url(buffer: ArrayBuffer | null | undefined): string {
-  if (!buffer) return "";
-  let s = "";
-  for (const b of new Uint8Array(buffer)) s += String.fromCharCode(b);
-  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function fromBase64Url(s: string): Uint8Array<ArrayBuffer> {
-  return Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0));
-}
-
 async function currentSubscription(): Promise<PushSubscription | null> {
   const registration = await navigator.serviceWorker.getRegistration();
   return (await registration?.pushManager.getSubscription()) ?? null;
 }
+
+/** Whether this browser has a push subscription, without asking the server anything. */
+export const hasPushSubscription = async () => (await currentSubscription()) !== null;
 
 /**
  * Whether push is on in this browser, telling the server its subscription again if so (the server
@@ -53,7 +46,9 @@ async function currentSubscription(): Promise<PushSubscription | null> {
 export async function checkPush(publicKey: string): Promise<boolean> {
   const sub = await currentSubscription();
   if (!sub || Notification.permission !== "granted") return false;
-  if (toBase64Url(sub.options.applicationServerKey) !== publicKey) {
+  const key = sub.options.applicationServerKey;
+  // A browser that doesn't say which key the subscription was made with is taken at its word.
+  if (key && toBase64Url(key) !== publicKey) {
     await sub.unsubscribe();
     await turnOnPush(publicKey);
     return true;
@@ -94,7 +89,10 @@ export async function turnOffPush(): Promise<void> {
 export async function testPush(): Promise<"sent" | "gone" | "failed"> {
   const sub = await currentSubscription();
   if (!sub) return "gone";
-  return (await api<{ result: "sent" | "gone" | "failed" }>("/api/push/test", { endpoint: sub.endpoint })).result;
+  const { result } = await api<{ result: "sent" | "gone" | "failed" }>("/api/push/test", { endpoint: sub.endpoint });
+  // The push service dropped it, so it can never work again; turning push on makes a new one.
+  if (result === "gone") await sub.unsubscribe().catch(() => {});
+  return result;
 }
 
 /** On signing out: whoever uses this browser next mustn't get this person's notifications. */

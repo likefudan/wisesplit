@@ -198,6 +198,11 @@ describe("push subscriptions", () => {
     expect(await subscriptionsOf(ann.id)).toEqual([]);
     expect(await subscriptionsOf(bob.id)).toEqual([shared.endpoint]);
 
+    // Nor take it over knowing only its address: that needs the browser's own keys.
+    const other = await makeBrowser();
+    expect((await post("/api/push/subscribe", ann, { endpoint: shared.endpoint, keys: other.keys })).status).toBe(204);
+    expect(await subscriptionsOf(bob.id)).toEqual([shared.endpoint]);
+
     // Ann can't turn off Bob's browser.
     expect((await post("/api/push/unsubscribe", ann, { endpoint: shared.endpoint })).status).toBe(204);
     expect(await subscriptionsOf(bob.id)).toEqual([shared.endpoint]);
@@ -211,6 +216,10 @@ describe("push subscriptions", () => {
       await subscribe(ann, b);
     }
     expect(await subscriptionsOf(ann.id)).toEqual(browsers.slice(2).map((b) => b.endpoint));
+    // Telling the server again (each visit to the settings page does) doesn't make one newer.
+    await subscribe(ann, browsers[2]!);
+    await subscribe(ann, await makeBrowser());
+    expect(await subscriptionsOf(ann.id)).not.toContain(browsers[2]!.endpoint);
   });
 
   it("sends a test message, and forgets a browser the push service says is gone", async () => {
@@ -341,6 +350,19 @@ describe("push notifications", () => {
     await vi.waitFor(async () => expect(await subscriptionsOf(bob.id)).toEqual([]));
     expect(sent.map((s) => s.url)).toEqual([bobPhone.endpoint]);
     expect(await subscriptionsOf(cat.id)).toEqual([catPhone.endpoint]);
+  });
+
+  it("shares out the pushes one event may send: everyone's newest browser first", async () => {
+    const { id, people } = await makeGroup(["Ann", "Cat", "B1", "B2", "B3", "B4"]);
+    const [ann, cat, ...busy] = people as [Person, Person, ...Person[]];
+    // Cat turned push on in one browser, before the others did in 10 each: 41 browsers in all.
+    const catPhone = await makeBrowser();
+    await subscribe(cat, catPhone);
+    for (const p of busy) for (let i = 0; i < 10; i++) await subscribe(p, await makeBrowser());
+    const sent = pushService();
+    expect((await addExpense(id, ann, ann, 1200, people)).status).toBe(200);
+    await vi.waitFor(() => expect(sent).toHaveLength(40));
+    expect(sent.map((s) => s.url)).toContain(catPhone.endpoint);
   });
 
   it("still does what was asked when push fails", async () => {

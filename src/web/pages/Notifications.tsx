@@ -10,7 +10,7 @@ import { ErrorMessage, Loading, Page, useErrorText } from "../components";
 import { formatDate } from "../format";
 import { useI18n } from "../i18n";
 import { setUnread } from "../notifications";
-import { checkPush, PushDenied, pushSupport, testPush, turnOffPush, turnOnPush } from "../push";
+import { checkPush, hasPushSubscription, PushDenied, pushSupport, testPush, turnOffPush, turnOnPush } from "../push";
 import { RequireUser } from "../RequireUser";
 import type { User } from "../session";
 
@@ -277,10 +277,19 @@ function PushSetting() {
     let alive = true;
     api<{ publicKey: string | null }>("/api/push")
       .then(async ({ publicKey }) => {
-        const enabled = publicKey ? await checkPush(publicKey) : false;
         if (!alive) return;
         setPublicKey(publicKey);
-        setOn(enabled);
+        if (!publicKey) return;
+        try {
+          const enabled = await checkPush(publicKey);
+          if (alive) setOn(enabled);
+        } catch (error) {
+          // The switch still shows, as the browser has it, so push can be turned off or on again.
+          const subscribed = await hasPushSubscription().catch(() => false);
+          if (!alive) return;
+          setOn(subscribed);
+          setMessage({ kind: "error", error });
+        }
       })
       .catch((error) => {
         if (!alive) return;
