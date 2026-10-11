@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { type Browser, expect, type Page, test } from "@playwright/test";
 
 const unique = (name: string) => `${name}-${Math.random().toString(36).slice(2, 8)}@example.com`;
@@ -168,6 +169,16 @@ test("add expenses, see who owes whom, and leave once settled", async ({ browser
   await expect(gas).toContainText(/you lent \$15\.0[01]/);
   await expect(balance(owner, "Payer Pat")).toContainText(/gets back \$15\.0[01]/);
   await expect(balance(owner, "Sharer Sam")).toContainText(/owes \$15\.0[01]/);
+
+  // Any member can download the group's records as CSV.
+  const [download] = await Promise.all([
+    owner.waitForEvent("download"),
+    owner.getByRole("button", { name: "Download CSV" }).click(),
+  ]);
+  expect(download.suggestedFilename()).toMatch(/^Road trip-\d{4}-\d{2}-\d{2}\.csv$/);
+  const csv = (await readFile(await download.path())).toString("utf8");
+  expect(csv).toMatch(/^\uFEFFDate,Description,Type,Paid by,Total,Currency,Payer Pat,Sharer Sam\r\n/);
+  expect(csv).toMatch(/\r\n2026-10-03,Gas,Expense,Payer Pat,30\.01,USD,15\.0[01],15\.0[01]\r\n$/);
 
   // The friend owes money, so can't leave yet.
   await friend.goto("/");

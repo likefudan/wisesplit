@@ -379,6 +379,20 @@ const en = {
   "error.invalid_receipt": "That photo could not be read. Try another one.",
   "error.receipt_too_large": "That photo is too large.",
   "error.photo_unreadable": "This file can't be opened as a picture. Try a JPEG or PNG photo.",
+  "export.title": "Export",
+  "export.hint":
+    "Download the group's expenses and confirmed payments as a spreadsheet (CSV). Each person has a column with their share; for a payment, the amount is under whoever received it.",
+  "export.download": "Download CSV",
+  "export.column.date": "Date",
+  "export.column.description": "Description",
+  "export.column.type": "Type",
+  "export.column.paidBy": "Paid by",
+  "export.column.total": "Total",
+  "export.column.currency": "Currency",
+  "export.type.expense": "Expense",
+  "export.type.payment": "Payment",
+  "export.payment": "{from} paid {to}",
+  "export.formerMember": "{name} (left)",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -736,6 +750,19 @@ const zh: Record<MessageKey, string> = {
   "error.invalid_receipt": "无法读取这张照片，请换一张。",
   "error.receipt_too_large": "照片太大了。",
   "error.photo_unreadable": "这个文件无法作为图片打开，请换一张 JPEG 或 PNG 照片。",
+  "export.title": "导出",
+  "export.hint": "把群组的账目和已确认的付款下载为表格（CSV）。每人一列，填的是各自分摊的金额；付款记在收款人那一列。",
+  "export.download": "下载 CSV",
+  "export.column.date": "日期",
+  "export.column.description": "说明",
+  "export.column.type": "类型",
+  "export.column.paidBy": "付款人",
+  "export.column.total": "金额",
+  "export.column.currency": "货币",
+  "export.type.expense": "账目",
+  "export.type.payment": "付款",
+  "export.payment": "{from} 付给 {to}",
+  "export.formerMember": "{name}（已退出）",
 };
 
 export const MESSAGES: Record<Lang, Record<MessageKey, string>> = { en, zh };
