@@ -25,6 +25,10 @@ export interface Env {
    * browser tests. Ignored unless ENVIRONMENT is "local" or "staging"; never works in production.
    */
   TEST_LOGIN_SECRET?: string;
+  /** Resend API key (secret) for notification emails. Without it and EMAIL_FROM, no email is sent. */
+  RESEND_API_KEY?: string;
+  /** Who notification emails are from, e.g. "wisesplit <notify@llmat.dev>"; a domain verified in Resend. */
+  EMAIL_FROM?: string;
 }
 
 /** The test site (staging.…) shows a banner and is hidden from search engines. */

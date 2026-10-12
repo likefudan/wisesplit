@@ -181,10 +181,11 @@ describe("notifications", () => {
     const { id, people } = await makeGroup(["Ann", "Bob", "Cat"]);
     const [ann, bob, cat] = people as [Person, Person, Person];
     expect(await json(await send("/api/notifications/settings", { cookie: bob.cookie }))).toEqual({
-      settings: { inApp: true },
+      settings: { inApp: true, email: true },
+      emailAvailable: false,
     });
     const off = await post("/api/notifications/settings", bob.cookie, { inApp: false });
-    expect(await json(off)).toEqual({ settings: { inApp: false } });
+    expect(await json(off)).toEqual({ settings: { inApp: false, email: true } });
     expect((await post("/api/notifications/settings", bob.cookie, { inApp: "no" })).status).toBe(400);
     await addExpense(id, ann, ann, 1000, [ann, bob]);
     expect(await kindsOf(bob)).toEqual([]);

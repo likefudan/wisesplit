@@ -296,7 +296,7 @@ export async function pushNotes(
       ),
       env.DB.prepare("SELECT name, currency FROM groups WHERE id = ?").bind(event.groupId),
     ]);
-    const names = new Map((users!.results as { id: string; name: string }[]).map((u) => [u.id, u.name]));
+    const names = Object.fromEntries((users!.results as { id: string; name: string }[]).map((u) => [u.id, u.name]));
     const group = (groups!.results as { name: string; currency: Currency }[])[0] ?? null;
     const gone: string[] = [];
     const chosen = fairShare(subs!.results as (PushSubscriptionInput & { user_id: string; lang: Lang })[], MAX_PUSHES);
@@ -306,10 +306,12 @@ export async function pushNotes(
       const left = deadline - Date.now();
       if (left < 1000) return;
       const note = notes.find((n) => n.userId === sub.user_id)!;
-      const said = notificationText({ ...note, actorId: event.actorId, group }, sub.lang, (id) =>
-        id === sub.user_id
-          ? translate(sub.lang, "notifications.you")
-          : (id && names.get(id)) || translate(sub.lang, "activity.someone"),
+      const said = notificationText(
+        { ...note, actorId: event.actorId },
+        sub.lang,
+        sub.user_id,
+        names,
+        group?.currency ?? null,
       );
       if (!said) return;
       const message: PushMessage = {

@@ -115,7 +115,7 @@ groupRoutes.post("/:id/members", async (c) => {
     await groupForMember(c.env, group.id, me.id);
     throw userNotFound();
   }
-  await notify(c.env, { kind: "member.added", actorId: me.id, groupId: group.id, userId: user.id });
+  await notify(c.env, { kind: "member.added", actorId: me.id, groupId: group.id, userId: user.id }, c.executionCtx);
   return c.json({ group: await groupDetail(c.env, group), added: user.id });
 });
 

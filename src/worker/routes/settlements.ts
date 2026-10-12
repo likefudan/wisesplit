@@ -121,13 +121,17 @@ settlementRoutes.post("/payments", async (c) => {
   // A pending payment waits for the payee. (One that counted at once was made with someone
   // deactivated, who can't be told here.)
   if ((added.results[0] as { status: string }).status === "pending")
-    await notify(c.env, {
-      kind: "payment.requested",
-      actorId: me.id,
-      groupId: group.id,
-      paymentId: id,
-      payment: { from, to, amount, method: body.method },
-    });
+    await notify(
+      c.env,
+      {
+        kind: "payment.requested",
+        actorId: me.id,
+        groupId: group.id,
+        paymentId: id,
+        payment: { from, to, amount, method: body.method },
+      },
+      c.executionCtx,
+    );
   return c.json({ payment: await paymentById(c.env, group.id, id) });
 });
 
@@ -190,13 +194,17 @@ for (const [action, rule] of Object.entries(DECISIONS)) {
       throw notYours();
     }
     const done = updated.results[0] as SettlementRow;
-    await notify(c.env, {
-      kind: `payment.${rule.status}` as "payment.confirmed" | "payment.declined" | "payment.withdrawn",
-      actorId: me.id,
-      groupId: group.id,
-      paymentId,
-      payment: { from: done.from_user, to: done.to_user, amount: done.amount, method: done.method },
-    });
+    await notify(
+      c.env,
+      {
+        kind: `payment.${rule.status}` as "payment.confirmed" | "payment.declined" | "payment.withdrawn",
+        actorId: me.id,
+        groupId: group.id,
+        paymentId,
+        payment: { from: done.from_user, to: done.to_user, amount: done.amount, method: done.method },
+      },
+      c.executionCtx,
+    );
     return c.json({ payment: await paymentById(c.env, group.id, paymentId) });
   });
 }

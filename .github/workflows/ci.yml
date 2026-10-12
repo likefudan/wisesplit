@@ -99,6 +99,10 @@ jobs:
           TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
           TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
           ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
+          # Its own key (best a separate Resend account), so the test site can't use up the live
+          # site's 100 emails a day.
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY_STAGING }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           TEST_LOGIN_SECRET: ${{ secrets.TEST_LOGIN_SECRET_STAGING }}
       - name: Web Push key for the test site (made once)
         run: node scripts/ensure-vapid.mjs staging
@@ -153,6 +157,8 @@ jobs:
           TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
           TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
           ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
       - name: Web Push key for the live site (made once)
         run: node scripts/ensure-vapid.mjs production
       - name: Smoke test the live site

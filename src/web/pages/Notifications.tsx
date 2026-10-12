@@ -155,10 +155,8 @@ function NotificationRow({
   onOpen: () => void;
 }) {
   const { lang, t } = useI18n();
-  const name = (id: string | null | undefined) =>
-    id === me.id ? t("notifications.you") : (id && names[id]) || t("activity.someone");
-  const said = notificationText(n, lang, name);
-  // A rejection never shows here (only approved users see the bell), nor anything newer than this page.
+  // A sign-up rejection is never under the bell: only approved users can see it.
+  const said = n.kind === "signup.rejected" ? null : notificationText(n, lang, me.id, names, n.group?.currency ?? null);
   if (!said) return null;
   const { text, detail } = said;
   const href = n.group ? `/groups/${encodeURIComponent(n.group.id)}` : "/";
@@ -179,11 +177,12 @@ export function NotificationSettingsPage() {
   return <RequireUser>{(me) => <SettingsForm me={me} />}</RequireUser>;
 }
 
-/** How to hear about things: on the site, and by push in this browser. */
+/** How to hear about things: on the site, by email, and by push in this browser. */
 function SettingsForm({ me }: { me: User }) {
   const { t } = useI18n();
   const errorText = useErrorText();
   const [settings, setSettings] = useState<NotificationSettings | null>(null);
+  const [emailAvailable, setEmailAvailable] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: true } | { ok: false; error: unknown } | null>(null);
@@ -191,8 +190,12 @@ function SettingsForm({ me }: { me: User }) {
   useEffect(() => {
     let alive = true;
     setMessage(null);
-    api<{ settings: NotificationSettings }>("/api/notifications/settings")
-      .then((r) => alive && setSettings(r.settings))
+    api<{ settings: NotificationSettings; emailAvailable: boolean }>("/api/notifications/settings")
+      .then((r) => {
+        if (!alive) return;
+        setSettings(r.settings);
+        setEmailAvailable(r.emailAvailable);
+      })
       .catch((e) => alive && setMessage({ ok: false, error: e }));
     return () => {
       alive = false;
@@ -241,6 +244,21 @@ function SettingsForm({ me }: { me: User }) {
             <span>{t("notifySettings.inApp")}</span>
           </label>
           <small class="muted">{t("notifySettings.inAppHint")}</small>
+          {/* Not offered where the site can't send email. */}
+          {emailAvailable && (
+            <>
+              <label class="field checkbox">
+                <input
+                  type="checkbox"
+                  checked={settings.email}
+                  disabled={busy}
+                  onChange={(e) => save({ email: e.currentTarget.checked })}
+                />
+                <span>{t("notifySettings.email")}</span>
+              </label>
+              <small class="muted">{t("notifySettings.emailHint", { email: me.email })}</small>
+            </>
+          )}
           <PushSetting me={me} />
           {message &&
             (message.ok ? (
