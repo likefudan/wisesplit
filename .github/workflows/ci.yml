@@ -87,6 +87,16 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - name: Secrets the test site needs (warns about missing ones)
+        run: node scripts/check-secrets.mjs staging
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
+          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+          ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY_STAGING }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
       - run: node scripts/resolve-d1.mjs staging
       - run: node scripts/ensure-r2.mjs staging
       - run: npx wrangler d1 migrations apply DB --remote --env staging
@@ -110,6 +120,67 @@ jobs:
         run: node scripts/smoke.mjs
         env:
           SITE_ORIGIN: https://staging.wisesplit.llmat.dev
+
+  # The launch check (e2e/launch.spec.ts: sign up, approval, a group, an expense, settling up,
+  # export) in a browser against the test site just deployed, through its test login. Skipped,
+  # with a warning, until TEST_LOGIN_SECRET_STAGING and ADMIN_EMAILS are set. A release needs this
+  # run green (release.yml), so it is checked on staging before production gets the same code.
+  e2e-staging:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    concurrency: deploy-staging
+    steps:
+      - name: Can it run?
+        id: can
+        env:
+          TEST_LOGIN_SECRET: ${{ secrets.TEST_LOGIN_SECRET_STAGING }}
+          ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
+        run: |
+          if [ -n "$TEST_LOGIN_SECRET" ] && [ -n "$ADMIN_EMAILS" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Skipped the browser check of the test site: set the TEST_LOGIN_SECRET_STAGING and ADMIN_EMAILS secrets"
+          fi
+      - if: steps.can.outputs.run
+        uses: actions/checkout@v7
+      - if: steps.can.outputs.run
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - if: steps.can.outputs.run
+        run: npm ci
+      - if: steps.can.outputs.run
+        name: Playwright version
+        id: pw
+        run: echo "version=$(node -p 'require("@playwright/test/package.json").version')" >> "$GITHUB_OUTPUT"
+      - if: steps.can.outputs.run
+        uses: actions/cache@v6
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+      - if: steps.can.outputs.run && steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+      - if: steps.can.outputs.run
+        name: Launch check on staging.wisesplit.llmat.dev
+        env:
+          E2E_TEST_LOGIN_SECRET: ${{ secrets.TEST_LOGIN_SECRET_STAGING }}
+          ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
+        run: |
+          # The first admin approves the newcomers, as a test identity of their own (not their Google account).
+          E2E_ADMIN_EMAIL=$(printf '%s' "${ADMIN_EMAILS%%,*}" | tr -d '[:space:]')
+          echo "::add-mask::$E2E_ADMIN_EMAIL"
+          export E2E_ADMIN_EMAIL
+          npm run test:e2e:staging
+      - if: failure() && steps.can.outputs.run
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-staging
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
 
   deploy-production:
     needs: [check, e2e]
@@ -136,6 +207,16 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - name: Secrets the live site needs (stops before any change if one is missing)
+        run: node scripts/check-secrets.mjs production
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
+          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+          ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
       - run: node scripts/resolve-d1.mjs production
       - run: node scripts/ensure-r2.mjs production
       - name: Back up the production database

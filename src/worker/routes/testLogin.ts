@@ -14,6 +14,17 @@ import { googleName } from "../users";
 export const testLoginEnabled = (env: Env) =>
   (env.ENVIRONMENT === "local" || env.ENVIRONMENT === "staging") && !!env.TEST_LOGIN_SECRET;
 
+/** The start of every test-login identity's Google id; Google's own ids are digits only. */
+const TEST_SUB = "test:";
+
+/**
+ * A browser signed in through the test login (on a site where it works), whose sign-up skips
+ * Turnstile: a robot check can't be passed by the browser tests that run against staging, and
+ * whoever can sign in this way holds the secret already.
+ */
+export const isTestIdentity = (env: Env, session: { google_sub: string } | null) =>
+  !!session && testLoginEnabled(env) && session.google_sub.startsWith(TEST_SUB);
+
 export const testLoginRoutes = new Hono<{ Bindings: Env }>();
 
 testLoginRoutes.post("/login", async (c) => {
@@ -27,7 +38,7 @@ testLoginRoutes.post("/login", async (c) => {
     throw new HttpError(400, "invalid_input", "email is required");
   // A Google id of its own ("test:" + email), so the same test user signs in again and a real
   // Google account can never be signed into (or have its email rewritten) through here.
-  const sub = `test:${email.toLowerCase()}`;
+  const sub = `${TEST_SUB}${email.toLowerCase()}`;
   await startSession(c, { google_sub: sub, email, name: googleName(body.name, email), picture: null });
   return c.body(null, 204);
 });

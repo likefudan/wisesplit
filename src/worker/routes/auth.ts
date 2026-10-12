@@ -7,6 +7,7 @@ import { HttpError, readJson, str } from "../http";
 import { findInvite, inviteNotFound, inviteUnusable, registerByInvite } from "../invites";
 import { fromBase64Url, pkceChallenge, randomToken, timingSafeEqual, toBase64Url } from "../lib/crypto";
 import { turnstileConfigured, verifyTurnstile } from "../turnstile";
+import { isTestIdentity } from "./testLogin";
 import { alreadyRegistered, googleName, parseLang, parseName, publicUser, register } from "../users";
 
 /** One cookie per sign-in in progress, named by its state, so two tabs signing in don't clash. */
@@ -54,7 +55,8 @@ authRoutes.get("/session", async (c) => {
   const { session, user } = await signedIn(c);
   return c.json({
     googleEnabled: googleEnabled(c.env),
-    turnstileSiteKey: turnstileConfigured(c.env) ? c.env.TURNSTILE_SITE_KEY! : null,
+    // No widget for a test-login identity: its sign-up skips the check (see isTestIdentity).
+    turnstileSiteKey: turnstileConfigured(c.env) && !isTestIdentity(c.env, session) ? c.env.TURNSTILE_SITE_KEY! : null,
     identity: session ? { email: session.email, name: session.name, picture: session.picture } : null,
     user: user ? publicUser(c.env, user) : null,
   });
@@ -205,7 +207,8 @@ authRoutes.post("/register", async (c) => {
     if (!found) throw inviteNotFound();
     if (found.state !== "valid") throw inviteUnusable();
   }
-  await verifyTurnstile(c.env, str(body.turnstileToken), c.req.header("CF-Connecting-IP"));
+  if (!isTestIdentity(c.env, session))
+    await verifyTurnstile(c.env, str(body.turnstileToken), c.req.header("CF-Connecting-IP"));
   if (invite === null) {
     const user = await register(c.env, session, existing, { name, lang });
     return c.json({ user: publicUser(c.env, user) });
