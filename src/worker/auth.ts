@@ -54,22 +54,20 @@ export async function startSession<E extends { Bindings: Env }>(c: Context<E>, i
   const raw = randomToken();
   const expires = new Date(Date.now() + SESSION_DAYS * 86400_000);
   const old = getCookie(c, sessionCookie(c));
+  const oldHash = old ? await sha256(old) : "";
+  const newHash = await sha256(raw);
   await c.env.DB.batch([
-    c.env.DB.prepare("DELETE FROM sessions WHERE expires_at < ? OR id_hash = ?").bind(
-      now(),
-      old ? await sha256(old) : "",
-    ),
+    // Push turned on in the session this replaces stays on if the same person signs in again, and
+    // goes with that session if someone else does.
+    c.env.DB.prepare(
+      `UPDATE push_subscriptions SET session_hash = ?
+       WHERE session_hash = ? AND user_id = (SELECT id FROM users WHERE google_sub = ?)`,
+    ).bind(newHash, oldHash, identity.google_sub),
+    c.env.DB.prepare("DELETE FROM push_subscriptions WHERE session_hash = ?").bind(oldHash),
+    c.env.DB.prepare("DELETE FROM sessions WHERE expires_at < ? OR id_hash = ?").bind(now(), oldHash),
     c.env.DB.prepare(
       "INSERT INTO sessions (id_hash, google_sub, email, name, picture, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    ).bind(
-      await sha256(raw),
-      identity.google_sub,
-      identity.email,
-      identity.name,
-      identity.picture,
-      now(),
-      expires.toISOString(),
-    ),
+    ).bind(newHash, identity.google_sub, identity.email, identity.name, identity.picture, now(), expires.toISOString()),
     // Keep what Google says about an existing user current: the email decides who is an admin.
     c.env.DB.prepare("UPDATE users SET email = ?, picture = ? WHERE google_sub = ?").bind(
       identity.email,
@@ -80,12 +78,20 @@ export async function startSession<E extends { Bindings: Env }>(c: Context<E>, i
   setCookie(c, sessionCookie(c), raw, { ...cookieOptions(c), expires });
 }
 
-export async function endSession<E extends { Bindings: Env }>(c: Context<E>): Promise<void> {
+/** The SHA-256 of this browser's session cookie, as `sessions.id_hash` stores it; null if none. */
+export async function sessionHash(c: Context<any>): Promise<string | null> {
   const raw = getCookie(c, sessionCookie(c));
-  if (raw)
-    await c.env.DB.prepare("DELETE FROM sessions WHERE id_hash = ?")
-      .bind(await sha256(raw))
-      .run();
+  return raw ? sha256(raw) : null;
+}
+
+/** Signs this browser out, and turns off the push notifications this session turned on. */
+export async function endSession<E extends { Bindings: Env }>(c: Context<E>): Promise<void> {
+  const hash = await sessionHash(c);
+  if (hash)
+    await c.env.DB.batch([
+      c.env.DB.prepare("DELETE FROM sessions WHERE id_hash = ?").bind(hash),
+      c.env.DB.prepare("DELETE FROM push_subscriptions WHERE session_hash = ?").bind(hash),
+    ]);
   deleteCookie(c, sessionCookie(c), cookieOptions(c));
 }
 

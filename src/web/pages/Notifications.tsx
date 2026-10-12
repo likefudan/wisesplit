@@ -10,6 +10,7 @@ import { ErrorMessage, Loading, Page, useErrorText } from "../components";
 import { formatDate } from "../format";
 import { useI18n } from "../i18n";
 import { setUnread } from "../notifications";
+import { checkPush, hasPushSubscription, PushDenied, pushSupport, testPush, turnOffPush, turnOnPush } from "../push";
 import { RequireUser } from "../RequireUser";
 import type { User } from "../session";
 
@@ -176,7 +177,7 @@ export function NotificationSettingsPage() {
   return <RequireUser>{(me) => <SettingsForm me={me} />}</RequireUser>;
 }
 
-/** How to hear about things: on the site, and by email. */
+/** How to hear about things: on the site, by email, and by push in this browser. */
 function SettingsForm({ me }: { me: User }) {
   const { t } = useI18n();
   const errorText = useErrorText();
@@ -258,6 +259,7 @@ function SettingsForm({ me }: { me: User }) {
               <small class="muted">{t("notifySettings.emailHint", { email: me.email })}</small>
             </>
           )}
+          <PushSetting me={me} />
           {message &&
             (message.ok ? (
               <p class="success" role="status">
@@ -269,5 +271,118 @@ function SettingsForm({ me }: { me: User }) {
         </div>
       )}
     </Page>
+  );
+}
+
+/**
+ * Push in this browser: a switch, or why there is none (not set up, not supported, or on an
+ * iPhone outside the Home Screen). On and off are per browser, so this reads the browser itself.
+ */
+function PushSetting({ me }: { me: User }) {
+  const { t } = useI18n();
+  const errorText = useErrorText();
+  const support = pushSupport();
+  // undefined while loading; null when the site has no key (push not set up).
+  const [publicKey, setPublicKey] = useState<string | null | undefined>(undefined);
+  const [on, setOn] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<
+    { kind: "denied" | "testSent" | "testFailed" } | { kind: "error"; error: unknown } | null
+  >(null);
+
+  useEffect(() => {
+    if (support !== "ok") return;
+    let alive = true;
+    api<{ publicKey: string | null }>("/api/push")
+      .then(async ({ publicKey }) => {
+        if (!alive) return;
+        setPublicKey(publicKey);
+        if (!publicKey) return;
+        try {
+          const enabled = await checkPush(publicKey, me.id);
+          if (alive) setOn(enabled);
+        } catch (error) {
+          // The switch still shows, as the browser has it, so push can be turned off or on again.
+          const subscribed = await hasPushSubscription().catch(() => false);
+          if (!alive) return;
+          setOn(subscribed);
+          setMessage({ kind: "error", error });
+        }
+      })
+      .catch((error) => {
+        if (!alive) return;
+        setPublicKey(null);
+        setMessage({ kind: "error", error });
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  async function flip(next: boolean) {
+    if (!publicKey) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      if (next) await turnOnPush(publicKey, me.id);
+      else await turnOffPush();
+      setOn(next);
+    } catch (error) {
+      setMessage(error instanceof PushDenied ? { kind: "denied" } : { kind: "error", error });
+      // Whatever the browser has now: a failed "on" leaves it off; a failed "off" may have got as
+      // far as unsubscribing (then only telling the server failed, and it stops sending anyway).
+      setOn(await hasPushSubscription().catch(() => on));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function test() {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await testPush();
+      if (result === "gone") setOn(false);
+      setMessage({ kind: result === "sent" ? "testSent" : "testFailed" });
+    } catch (error) {
+      setMessage({ kind: "error", error });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (support !== "ok")
+    return (
+      <p class="muted">{t(support === "ios-install" ? "notifySettings.pushIos" : "notifySettings.pushUnsupported")}</p>
+    );
+  if (publicKey === undefined) return <Loading />;
+  if (publicKey === null && message === null) return <p class="muted">{t("notifySettings.pushNotConfigured")}</p>;
+  return (
+    <>
+      {publicKey && (
+        <>
+          <label class="field checkbox">
+            <input type="checkbox" checked={on} disabled={busy} onChange={(e) => flip(e.currentTarget.checked)} />
+            <span>{t("notifySettings.push")}</span>
+          </label>
+          <small class="muted">{t("notifySettings.pushHint")}</small>
+          {on && (
+            <div class="actions">
+              <button type="button" class="button secondary small" disabled={busy} onClick={test}>
+                {t("notifySettings.pushTest")}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+      {message?.kind === "denied" && <ErrorMessage>{t("notifySettings.pushDenied")}</ErrorMessage>}
+      {message?.kind === "testSent" && (
+        <p class="success" role="status">
+          {t("notifySettings.pushTestSent")}
+        </p>
+      )}
+      {message?.kind === "testFailed" && <ErrorMessage>{t("notifySettings.pushTestFailed")}</ErrorMessage>}
+      {message?.kind === "error" && <ErrorMessage>{errorText(message.error)}</ErrorMessage>}
+    </>
   );
 }

@@ -23,3 +23,8 @@ TEST_LOGIN_SECRET="local-secret"
 # Emails to example.com and other reserved domains, such as the test logins', are never sent.
 # RESEND_API_KEY="re_..."
 # EMAIL_FROM="wisesplit <notify@your-verified-domain>"
+
+# Optional: Web Push (CI makes the staging and production keys). Make a local key with
+#   node -e 'crypto.subtle.generateKey({name:"ECDSA",namedCurve:"P-256"},true,["sign"]).then(k=>crypto.subtle.exportKey("jwk",k.privateKey)).then(({kty,crv,x,y,d})=>console.log(JSON.stringify({kty,crv,x,y,d})))'
+# and paste what it prints between the single quotes:
+# VAPID_KEY='{"kty":"EC","crv":"P-256",...}'

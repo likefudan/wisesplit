@@ -104,6 +104,8 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY_STAGING }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           TEST_LOGIN_SECRET: ${{ secrets.TEST_LOGIN_SECRET_STAGING }}
+      - name: Web Push key for the test site (made once)
+        run: node scripts/ensure-vapid.mjs staging
       - name: Smoke test the test site
         run: node scripts/smoke.mjs
         env:
@@ -157,5 +159,7 @@ jobs:
           ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+      - name: Web Push key for the live site (made once)
+        run: node scripts/ensure-vapid.mjs production
       - name: Smoke test the live site
         run: node scripts/smoke.mjs

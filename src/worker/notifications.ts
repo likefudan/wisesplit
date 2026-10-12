@@ -13,6 +13,7 @@ import { canEmail, EMAILS_PER_DAY, notificationEmail, SIGNUP_RESERVE, sendEmails
 import type { Env } from "./env";
 import { HttpError, now } from "./http";
 import { randomId } from "./lib/crypto";
+import { pushNotes } from "./push";
 
 /**
  * Something that happened that people should hear about, as the route that did it describes it.
@@ -32,7 +33,7 @@ export type NotifyEvent = { actorId: string } & (
 );
 
 /** One person to tell, and what they read. */
-type Note = { userId: string } & NotificationData;
+export type Note = { userId: string } & NotificationData;
 
 /** Who an expense involves: who paid it and who shares it. */
 const involved = (e: ExpenseSnapshot) => [e.paidBy, ...Object.keys(e.shares)];
@@ -86,10 +87,11 @@ type Later = { waitUntil?: (promise: Promise<unknown>) => void };
 
 /**
  * Tells everyone `event` concerns, apart from whoever did it: under the bell, for those who can
- * see it there (approved, still in the group, and with in-app notifications on), and by email, for
- * those who haven't turned email off. A notification is a side effect of something already done,
- * so a failure here is logged and never undoes or blocks it. Emails go out after the response when
- * `ctx` allows (the route's `c.executionCtx`), so nobody waits on the mail service.
+ * see it there (approved, still in the group, and with in-app notifications on), by email, for
+ * those who haven't turned email off, and by push to every browser they turned push on in
+ * (src/worker/push.ts). A notification is a side effect of something already done, so a failure
+ * here is logged and never undoes or blocks it. Emails and push go out after the response when
+ * `ctx` allows (the route's `c.executionCtx`), so nobody waits on the mail or push services.
  */
 export async function notify(env: Env, event: NotifyEvent, ctx?: Later): Promise<void> {
   let notes: Note[];
@@ -101,6 +103,13 @@ export async function notify(env: Env, event: NotifyEvent, ctx?: Later): Promise
   }
   if (!notes.length) return;
   await tellInApp(env, event, notes);
+  // Push only where the site has a key for it.
+  if (env.VAPID_KEY) {
+    const subjectId = "expenseId" in event ? event.expenseId : "paymentId" in event ? event.paymentId : null;
+    const pushing = pushNotes(env, { actorId: event.actorId, groupId: groupOf(event), subjectId }, notes);
+    if (ctx?.waitUntil) ctx.waitUntil(pushing);
+    else await pushing;
+  }
   if (!canEmail(env)) return;
   const emailing = email(env, event, notes);
   if (ctx?.waitUntil) ctx.waitUntil(emailing);

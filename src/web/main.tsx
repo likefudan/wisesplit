@@ -10,6 +10,7 @@ import { NewPayment } from "./pages/Payments";
 import { NotFound } from "./pages/NotFound";
 import { Notifications, NotificationSettingsPage } from "./pages/Notifications";
 import { Profile } from "./pages/Profile";
+import { registerServiceWorker } from "./push";
 import "./styles.css";
 
 function App() {
@@ -36,3 +37,4 @@ function App() {
 }
 
 render(<App />, document.getElementById("app")!);
+registerServiceWorker();
