@@ -84,6 +84,27 @@ body {
   padding: 24px 16px;
 }
 
+.footer {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  padding: 8px 16px 32px;
+  font-size: 13px;
+}
+
+.footer a {
+  color: var(--muted);
+}
+
+.legal h2 {
+  font-size: 18px;
+  margin-top: 24px;
+}
+
+.legal li {
+  margin-bottom: 6px;
+}
+
 .lead {
   font-size: 18px;
   color: var(--muted);

@@ -8,7 +8,10 @@ import { useUnread } from "./notifications";
 import { chooseLang, useSession } from "./session";
 import { isStaging } from "./site";
 
-/** Every page's frame: the test-site banner, the header with the account and language switch, then the content. */
+/**
+ * Every page's frame: the test-site banner, the header with the account and language switch, the
+ * content, then the footer with the privacy policy and terms.
+ */
 export function Page({ title, children }: { title?: string; children: ComponentChildren }) {
   const { lang, t } = useI18n();
   const session = useSession();
@@ -52,6 +55,10 @@ export function Page({ title, children }: { title?: string; children: ComponentC
         {title && <h1>{title}</h1>}
         {children}
       </main>
+      <footer class="footer">
+        <a href="/privacy">{t("legal.privacy")}</a>
+        <a href="/terms">{t("legal.terms")}</a>
+      </footer>
     </>
   );
 }

@@ -6,6 +6,7 @@ import { EditExpense, NewExpense } from "./pages/Expenses";
 import { GroupPage, NewGroup } from "./pages/Groups";
 import { Home } from "./pages/Home";
 import { Invite } from "./pages/Invite";
+import { Privacy, Terms } from "./pages/Legal";
 import { NewPayment } from "./pages/Payments";
 import { NotFound } from "./pages/NotFound";
 import { Notifications, NotificationSettingsPage } from "./pages/Notifications";
@@ -30,6 +31,8 @@ function App() {
         <Route path="/invite/:token" component={Invite} />
         <Route path="/admin" component={Admin} />
         <Route path="/admin/settings" component={AdminSettings} />
+        <Route path="/privacy" component={Privacy} />
+        <Route path="/terms" component={Terms} />
         <Route default component={NotFound} />
       </Router>
     </LocationProvider>
