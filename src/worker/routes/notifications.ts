@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { NOTIFICATIONS_PAGE } from "../../shared/notifications";
 import { type AppEnv, requireApproved } from "../auth";
+import { canEmail } from "../email";
 import { readJson } from "../http";
 import {
   getNotificationSettings,
@@ -26,8 +27,10 @@ notificationRoutes.post("/read-all", async (c) => {
   return c.body(null, 204);
 });
 
+// `emailAvailable`: whether this site can send email at all (Resend is set up), so the page
+// doesn't offer emails that would never come.
 notificationRoutes.get("/settings", async (c) =>
-  c.json({ settings: await getNotificationSettings(c.env, c.get("user").id) }),
+  c.json({ settings: await getNotificationSettings(c.env, c.get("user").id), emailAvailable: canEmail(c.env) }),
 );
 
 notificationRoutes.post("/settings", async (c) =>

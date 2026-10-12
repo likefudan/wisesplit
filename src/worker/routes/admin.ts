@@ -56,11 +56,15 @@ adminRoutes.post("/users/:id/:action", async (c) => {
     .first<UserRow>();
   if (!updated) throw new HttpError(409, "wrong_status", "The user's status has changed; reload the list");
   if (name === "approve" || name === "reject")
-    await notify(c.env, {
-      kind: name === "approve" ? "signup.approved" : "signup.rejected",
-      actorId: admin.id,
-      userId: id,
-    });
+    await notify(
+      c.env,
+      {
+        kind: name === "approve" ? "signup.approved" : "signup.rejected",
+        actorId: admin.id,
+        userId: id,
+      },
+      c.executionCtx,
+    );
   return c.json({ user: publicUser(c.env, updated) });
 });
 

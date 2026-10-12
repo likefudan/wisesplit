@@ -15,6 +15,8 @@ const NAMES = [
   "TURNSTILE_SITE_KEY",
   "TURNSTILE_SECRET_KEY",
   "ADMIN_EMAILS",
+  "RESEND_API_KEY",
+  "EMAIL_FROM",
   // The test login only ever works on staging (src/worker/routes/testLogin.ts); production never gets it.
   ...(target === "staging" ? ["TEST_LOGIN_SECRET"] : []),
 ];

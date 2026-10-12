@@ -16,6 +16,8 @@ export default defineConfig({
           TURNSTILE_SECRET_KEY: "",
           ADMIN_EMAILS: "",
           TEST_LOGIN_SECRET: "",
+          RESEND_API_KEY: "",
+          EMAIL_FROM: "",
         },
       },
     })),

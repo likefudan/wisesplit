@@ -1,5 +1,6 @@
 import type { ExpenseSnapshot } from "../shared/activity";
 import type { Currency } from "../shared/currencies";
+import type { Lang } from "../shared/i18n";
 import {
   type AppNotification,
   type NotificationData,
@@ -8,6 +9,7 @@ import {
   type PaymentNote,
   UNREAD_MAX,
 } from "../shared/notifications";
+import { canEmail, EMAILS_PER_DAY, notificationEmail, SIGNUP_RESERVE, sendEmails } from "./email";
 import type { Env } from "./env";
 import { HttpError, now } from "./http";
 import { randomId } from "./lib/crypto";
@@ -79,17 +81,38 @@ function notesFor(event: NotifyEvent): Note[] {
   }
 }
 
+/** What `notify` needs of the request's context: a way to finish work after the response. */
+type Later = { waitUntil?: (promise: Promise<unknown>) => void };
+
 /**
  * Tells everyone `event` concerns, apart from whoever did it: under the bell, for those who can
- * see it there (approved, still in the group, and with in-app notifications on). A notification is
- * a side effect of something already done, so a failure here is logged and never undoes or blocks
- * it. Email and push (PR 9 and 10) go out from here too.
+ * see it there (approved, still in the group, and with in-app notifications on), and by email, for
+ * those who haven't turned email off. A notification is a side effect of something already done,
+ * so a failure here is logged and never undoes or blocks it. Emails go out after the response when
+ * `ctx` allows (the route's `c.executionCtx`), so nobody waits on the mail service.
  */
-export async function notify(env: Env, event: NotifyEvent): Promise<void> {
+export async function notify(env: Env, event: NotifyEvent, ctx?: Later): Promise<void> {
+  let notes: Note[];
   try {
-    const notes = notesFor(event).filter((n) => n.userId !== event.actorId);
-    if (!notes.length) return;
-    const groupId = "groupId" in event ? event.groupId : null;
+    notes = notesFor(event).filter((n) => n.userId !== event.actorId);
+  } catch (err) {
+    console.error("notifying failed:", event.kind, err);
+    return;
+  }
+  if (!notes.length) return;
+  await tellInApp(env, event, notes);
+  if (!canEmail(env)) return;
+  const emailing = email(env, event, notes);
+  if (ctx?.waitUntil) ctx.waitUntil(emailing);
+  else await emailing;
+}
+
+const groupOf = (event: NotifyEvent) => ("groupId" in event ? event.groupId : null);
+
+/** The notifications under the bell. */
+async function tellInApp(env: Env, event: NotifyEvent, notes: Note[]): Promise<void> {
+  try {
+    const groupId = groupOf(event);
     const subjectId = "expenseId" in event ? event.expenseId : "paymentId" in event ? event.paymentId : null;
     const at = now();
     // Each recipient is checked in the statement that tells them, so someone who has just left the
@@ -124,6 +147,50 @@ export async function notify(env: Env, event: NotifyEvent): Promise<void> {
   }
 }
 
+/**
+ * The same notifications by email, one per person, in their language. Told are the same people as
+ * under the bell (a rejected applicant aside, who can only be told this way), less those who turned
+ * email off.
+ */
+async function email(env: Env, event: NotifyEvent, notes: Note[]): Promise<void> {
+  try {
+    const groupId = groupOf(event);
+    const byUser = new Map(notes.map((n) => [n.userId, { ...n, actorId: event.actorId }]));
+    const ids = [...new Set([...byUser.values()].flatMap(mentioned))];
+    const [{ results: people }, group, names] = await Promise.all([
+      env.DB.prepare(
+        `SELECT u.id, u.email, u.lang FROM users u
+         WHERE u.id IN (SELECT value FROM json_each(?)) AND u.status = ?
+           AND (? IS NULL OR EXISTS (SELECT 1 FROM group_members m WHERE m.group_id = ? AND m.user_id = u.id))
+           AND NOT EXISTS (SELECT 1 FROM notification_prefs p WHERE p.user_id = u.id AND p.email = 0)`,
+      )
+        .bind(
+          JSON.stringify([...byUser.keys()]),
+          event.kind === "signup.rejected" ? "rejected" : "approved",
+          groupId,
+          groupId,
+        )
+        .all<{ id: string; email: string; lang: Lang }>(),
+      groupId
+        ? env.DB.prepare("SELECT id, name, currency FROM groups WHERE id = ?")
+            .bind(groupId)
+            .first<{ id: string; name: string; currency: Currency }>()
+        : null,
+      namesOf(env, ids),
+    ]);
+    // The group was deleted in the meantime: there is nothing left to point to.
+    if (!people.length || (groupId && !group)) return;
+    const emails = people.flatMap((person) => {
+      const note = byUser.get(person.id);
+      return (note && notificationEmail(env, person, note, group, names)) ?? [];
+    });
+    // Everyone else can also read it under the bell.
+    await sendEmails(env, emails, event.kind === "signup.rejected" ? EMAILS_PER_DAY : EMAILS_PER_DAY - SIGNUP_RESERVE);
+  } catch (err) {
+    console.error("emailing failed:", event.kind, err);
+  }
+}
+
 interface NotificationRow {
   id: string;
   kind: AppNotification["kind"];
@@ -147,8 +214,16 @@ export async function unreadCount(env: Env, userId: string): Promise<number> {
   return row?.n ?? 0;
 }
 
+/** The name of each of `ids`, by id. */
+async function namesOf(env: Env, ids: string[]): Promise<Record<string, string>> {
+  const { results } = await env.DB.prepare("SELECT id, name FROM users WHERE id IN (SELECT value FROM json_each(?))")
+    .bind(JSON.stringify(ids))
+    .all<{ id: string; name: string }>();
+  return Object.fromEntries(results.map((u) => [u.id, u.name]));
+}
+
 /** Ids a notification mentions: who did it, and who paid or was paid. */
-function mentioned(n: AppNotification): string[] {
+function mentioned(n: { actorId: string | null } & NotificationData): string[] {
   const ids = n.actorId ? [n.actorId] : [];
   if (n.kind === "expense.added") ids.push(n.data.paidBy);
   if (n.kind.startsWith("payment.")) {
@@ -203,15 +278,9 @@ export async function notificationPage(
         read: r.read_at !== null,
       }) as AppNotification,
   );
-  const ids = [...new Set(notifications.flatMap(mentioned))];
-  const { results: users } = await env.DB.prepare(
-    "SELECT id, name FROM users WHERE id IN (SELECT value FROM json_each(?))",
-  )
-    .bind(JSON.stringify(ids))
-    .all<{ id: string; name: string }>();
   return {
     notifications,
-    names: Object.fromEntries(users.map((u) => [u.id, u.name])),
+    names: await namesOf(env, [...new Set(notifications.flatMap(mentioned))]),
     next: results.length > size ? notifications[notifications.length - 1]!.id : null,
     unread,
   };
@@ -229,11 +298,23 @@ export async function markRead(env: Env, userId: string, id: string | null): Pro
       .run();
 }
 
+/** Each setting and its column in notification_prefs. */
+const SETTING_COLUMNS = { inApp: "in_app", email: "email" } as const satisfies Record<
+  keyof NotificationSettings,
+  string
+>;
+const SETTINGS = Object.keys(SETTING_COLUMNS) as (keyof NotificationSettings)[];
+
 export async function getNotificationSettings(env: Env, userId: string): Promise<NotificationSettings> {
-  const row = await env.DB.prepare("SELECT in_app FROM notification_prefs WHERE user_id = ?")
+  const row = await env.DB.prepare(
+    `SELECT ${Object.values(SETTING_COLUMNS).join(", ")} FROM notification_prefs WHERE user_id = ?`,
+  )
     .bind(userId)
-    .first<{ in_app: number }>();
-  return { inApp: row ? row.in_app === 1 : true };
+    .first<Record<string, number>>();
+  // No row: everything on.
+  return Object.fromEntries(
+    SETTINGS.map((k) => [k, row ? row[SETTING_COLUMNS[k]] === 1 : true]),
+  ) as unknown as NotificationSettings;
 }
 
 /** Saves the settings present in `body`; each is checked before any is saved. */
@@ -242,13 +323,16 @@ export async function updateNotificationSettings(
   userId: string,
   body: Record<string, unknown>,
 ): Promise<NotificationSettings> {
-  if ("inApp" in body) {
-    if (typeof body.inApp !== "boolean") throw new HttpError(400, "invalid_input", "inApp must be true or false");
+  const given = SETTINGS.filter((k) => k in body);
+  for (const k of given)
+    if (typeof body[k] !== "boolean") throw new HttpError(400, "invalid_input", `${k} must be true or false`);
+  if (given.length) {
+    const columns = given.map((k) => SETTING_COLUMNS[k]);
     await env.DB.prepare(
-      `INSERT INTO notification_prefs (user_id, in_app) VALUES (?, ?)
-       ON CONFLICT (user_id) DO UPDATE SET in_app = excluded.in_app`,
+      `INSERT INTO notification_prefs (user_id, ${columns.join(", ")}) VALUES (?, ${columns.map(() => "?").join(", ")})
+       ON CONFLICT (user_id) DO UPDATE SET ${columns.map((c) => `${c} = excluded.${c}`).join(", ")}`,
     )
-      .bind(userId, body.inApp ? 1 : 0)
+      .bind(userId, ...given.map((k) => (body[k] ? 1 : 0)))
       .run();
   }
   return getNotificationSettings(env, userId);
