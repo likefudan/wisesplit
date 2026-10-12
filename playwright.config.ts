@@ -24,7 +24,8 @@ export default defineConfig({
     hasTouch: true,
     locale: "en-US",
     timezoneId: "America/Los_Angeles",
-    trace: "retain-on-failure",
+    // Not on a deployed site: a trace records the test login's secret.
+    trace: REMOTE ? "off" : "retain-on-failure",
     // A preinstalled Chromium elsewhere (e.g. a sandbox) instead of Playwright's own download.
     launchOptions: process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : {},
   },

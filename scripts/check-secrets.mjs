@@ -9,16 +9,19 @@ const target = targetEnvironment();
 const needed = syncedSecrets(target).filter((n) => n !== "TEST_LOGIN_SECRET");
 
 const notInGitHub = needed.filter((n) => !process.env[n]);
-// A Worker that was never deployed has no secrets to list.
-const onWorker = notInGitHub.length ? (listSecretNames(target) ?? []) : [];
-const missing = notInGitHub.filter((n) => !onWorker.includes(n));
+// null when they couldn't be listed, as for a Worker never deployed.
+const onWorker = notInGitHub.length ? listSecretNames(target) : [];
+const missing = notInGitHub.filter((n) => !onWorker?.includes(n));
 if (!missing.length) {
   console.log(`The ${target} site has every secret it needs`);
   process.exit();
 }
 // GitHub's name for each: the test site's email key has one of its own.
 const github = missing.map((n) => (target === "staging" && n === "RESEND_API_KEY" ? "RESEND_API_KEY_STAGING" : n));
-const message = `Not set in GitHub (Settings → Secrets and variables → Actions) nor on the ${target} Worker: ${github.join(", ")}. See README "One-time setup".`;
+const where = onWorker
+  ? `nor on the ${target} Worker`
+  : `and the ${target} Worker's secrets could not be listed (output above; not deployed yet?)`;
+const message = `Not set in GitHub (Settings → Secrets and variables → Actions) ${where}: ${github.join(", ")}. See README "One-time setup".`;
 if (target === "production") {
   console.error(`::error::${message}`);
   process.exit(1);

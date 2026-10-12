@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { type Browser, expect, type Page } from "@playwright/test";
 
 /**
  * Where the browser tests run: the throwaway local Worker by default, or a deployed site when
@@ -21,4 +21,17 @@ export async function signIn(page: Page, email: string, name = "Tester") {
     data: { email, name },
   });
   expect(res.status()).toBe(204);
+}
+
+/** A browser signed in as the admin, signed up if this is their first time on the site. */
+export async function adminPage(browser: Browser) {
+  const page = await (await browser.newContext()).newPage();
+  await signIn(page, ADMIN_EMAIL, "wisesplit e2e admin");
+  await page.goto("/");
+  const hi = page.getByRole("heading", { name: /^Hi, / });
+  const signupForm = page.getByRole("heading", { name: "Sign up" });
+  await expect(hi.or(signupForm)).toBeVisible();
+  if (await signupForm.isVisible()) await page.getByRole("button", { name: "Sign up" }).click();
+  await expect(hi).toBeVisible();
+  return page;
 }

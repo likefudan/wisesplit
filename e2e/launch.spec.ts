@@ -1,24 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { type Browser, expect, type Page, test } from "@playwright/test";
-import { ADMIN_EMAIL, REMOTE, SITE, signIn, unique } from "./site";
+import { adminPage, REMOTE, SITE, signIn, unique } from "./site";
 
 // The whole way through, as the launch checklist asks: sign up, get approved, make a group, add an
 // expense, settle up, export. Runs with the other browser tests, and against the test site after
 // each deploy to it (CI's deploy-staging job), where it tidies up after itself by deleting the
 // group. Its two users stay behind, under example.com addresses.
-
-/** A browser signed in as the admin, signed up if this is their first time on the site. */
-async function adminPage(browser: Browser) {
-  const page = await (await browser.newContext()).newPage();
-  await signIn(page, ADMIN_EMAIL, "wisesplit e2e admin");
-  await page.goto("/");
-  const hi = page.getByRole("heading", { name: /^Hi, / });
-  const signupForm = page.getByRole("heading", { name: "Sign up" });
-  await expect(hi.or(signupForm)).toBeVisible();
-  if (await signupForm.isVisible()) await page.getByRole("button", { name: "Sign up" }).click();
-  await expect(hi).toBeVisible();
-  return page;
-}
 
 /** Signs up through the form; the admin approves them unless the site lets everyone in at once. */
 async function signUp(browser: Browser, name: string) {

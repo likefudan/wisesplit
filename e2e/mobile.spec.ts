@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { ADMIN_EMAIL, signIn, unique } from "./site";
+import { adminPage, signIn, unique } from "./site";
 
 // The smallest phones still in use are 320 CSS pixels wide. With long names, descriptions and
 // amounts, no page may scroll sideways there (a scrolling strip inside a page, like the admin's
@@ -17,12 +17,7 @@ async function fitsTheScreen(page: Page, path: string) {
 }
 
 test("no page scrolls sideways on a small phone", async ({ browser }) => {
-  const admin = await (await browser.newContext()).newPage();
-  await signIn(admin, ADMIN_EMAIL, "Admin");
-  await admin.goto("/");
-  const signupForm = admin.getByRole("heading", { name: "Sign up" });
-  await expect(admin.getByRole("heading", { name: /^Hi, / }).or(signupForm)).toBeVisible();
-  if (await signupForm.isVisible()) await admin.getByRole("button", { name: "Sign up" }).click();
+  const admin = await adminPage(browser);
 
   async function newcomer(name: string) {
     const email = unique("narrow");
@@ -38,8 +33,11 @@ test("no page scrolls sideways on a small phone", async ({ browser }) => {
   const ben = await newcomer("Bartholomew Christophersen");
   await newcomer("Someone Still Waiting With A Long Name");
   await admin.goto("/admin");
-  for (const { email } of [ana, ben])
-    await admin.getByRole("listitem").filter({ hasText: email }).getByRole("button", { name: "Approve" }).click();
+  for (const { email } of [ana, ben]) {
+    const row = admin.getByRole("listitem").filter({ hasText: email });
+    await row.getByRole("button", { name: "Approve" }).click();
+    await expect(row).toHaveCount(0);
+  }
   await fitsTheScreen(admin, "/admin");
 
   const page = ana.page;

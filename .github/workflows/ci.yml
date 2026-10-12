@@ -173,14 +173,7 @@ jobs:
           echo "::add-mask::$E2E_ADMIN_EMAIL"
           export E2E_ADMIN_EMAIL
           npm run test:e2e:staging
-      - if: failure() && steps.can.outputs.run
-        uses: actions/upload-artifact@v7
-        with:
-          name: playwright-report-staging
-          path: |
-            playwright-report/
-            test-results/
-          retention-days: 7
+      # No report is uploaded: the test login's secret is in its requests. The log says what failed.
 
   deploy-production:
     needs: [check, e2e]
