@@ -17,10 +17,19 @@ const checks = [
   ],
   ["unknown API path", "/api/not-a-real-path", (r) => r.status === 404],
   ["sign-in status", "/api/auth/session", (r, body) => r.status === 200 && "googleEnabled" in JSON.parse(body)],
-  // The live site must never have the browser tests' test login.
   ...(staging
     ? []
     : [
+        // People can sign in and sign up on the live site (its secrets reached the Worker).
+        [
+          "Google sign-in and Turnstile set up",
+          "/api/auth/session",
+          (r, body) => {
+            const session = JSON.parse(body);
+            return r.status === 200 && session.googleEnabled === true && !!session.turnstileSiteKey;
+          },
+        ],
+        // The live site must never have the browser tests' test login.
         [
           "no test login",
           "/api/test/login",

@@ -2,7 +2,7 @@
 
 A Splitwise-like site for splitting expenses with friends: no ads, no limits. Runs on Cloudflare's free tier.
 
-- **Production**: https://wisesplit.llmat.dev (goes live with the first Release run; planned for the launch PR)
+- **Production**: https://wisesplit.llmat.dev (goes live with the first Release run, see [Going live](#going-live))
 - **Staging**: https://staging.wisesplit.llmat.dev (yellow "test site" banner; its own data)
 
 What it will do: [docs/mvp-scope.md](docs/mvp-scope.md). How it is being built, PR by PR: [docs/pr-plan.md](docs/pr-plan.md).
@@ -26,6 +26,12 @@ npm test             # unit and API tests in the Workers runtime
 npm run test:e2e     # browser tests against a throwaway local Worker on port 8788
 ```
 
+The browser tests run in a 390px-wide phone; `e2e/mobile.spec.ts` checks no page scrolls sideways at 320px. `e2e/launch.spec.ts` goes the whole way through (sign up, approval, a group, an expense, settling up, export) and also runs against the test site after each deploy to it; to run it there by hand:
+
+```sh
+E2E_TEST_LOGIN_SECRET=… E2E_ADMIN_EMAIL=you@gmail.com npm run test:e2e:staging
+```
+
 The local database lives under `.wrangler/`; `npm run db:migrate:local` applies new migrations to it.
 
 Copy `.dev.vars.example` to `.dev.vars` first: it makes the local site a "local" one (sign-up works without Turnstile), names you as admin, and turns on the test login, so you can sign in without Google:
@@ -43,7 +49,7 @@ curl -i -X POST http://localhost:8787/api/test/login -H 'Origin: http://localhos
 - A Google account then signs up (display name + Turnstile) and waits on the admin's pending list, unless the admin has turned off *New sign-ups require approval* in `/admin/settings`. The daily sign-up cap and the pending-list cap are set there too. Rejected applicants may apply again at once.
 - Admins are the Google emails in the `ADMIN_EMAILS` secret. Their own sign-up is approved at once.
 - API routes for members use `requireApproved` from `src/worker/auth.ts` (`c.get("user")` is the user); admin routes use `requireAdmin`.
-- `POST /api/test/login` signs in without Google for the browser tests. It works only when `ENVIRONMENT` is `local` or `staging` and `TEST_LOGIN_SECRET` is set; production never has it (a unit test and the post-deploy smoke test check).
+- `POST /api/test/login` signs in without Google for the browser tests. It works only when `ENVIRONMENT` is `local` or `staging` and `TEST_LOGIN_SECRET` is set; production never has it (a unit test and the post-deploy smoke test check). Identities signed in this way sign up without Turnstile (`isTestIdentity` in `src/worker/routes/testLogin.ts`), so the browser tests can run on staging; everyone else still gets the check.
 
 ### Groups
 
@@ -93,8 +99,8 @@ Every string on the pages comes from `src/shared/i18n.ts`, which holds an Englis
 
 `.github/workflows/ci.yml` runs lint, typecheck, unit tests and browser tests on every pull request.
 
-- **Merge to `main`** → the same checks, then deploy to staging (migrate its D1 database, deploy the `wisesplit-staging` Worker, smoke test it).
-- **Release** → Actions → *Release* → *Run workflow* on `main` tags it `vYYYY.MM.DD` and deploys production after backing up its database. Running CI by hand on an older tag redeploys that version's code. It cannot undo database migrations, so only roll back to a tag that already has every migration in `migrations/` (otherwise restore the backup the release made, from that run's artifacts).
+- **Merge to `main`** → the same checks, then deploy to staging (migrate its D1 database, deploy the `wisesplit-staging` Worker, smoke test it), then run the launch browser test against it (job `e2e-staging`; skipped with a warning until `TEST_LOGIN_SECRET_STAGING` and `ADMIN_EMAILS` are set). Each run signs up two users with example.com addresses, which count toward the test site's daily sign-up cap (`/admin/settings`) and stay behind; it deletes its group.
+- **Release** → Actions → *Release* → *Run workflow* on `main` tags it `vYYYY.MM.DD` and deploys production after backing up its database. Only a commit whose whole CI run on `main` is green (staging deploy and launch test included) can be released. Before touching anything, the deploy checks the live site will have every secret below except the test login (set in GitHub, or already on the Worker: `scripts/check-secrets.mjs`) and stops if one is missing; afterwards the smoke test checks Google sign-in and Turnstile are switched on. Running CI by hand on an older tag redeploys that version's code. It cannot undo database migrations, so only roll back to a tag that already has every migration in `migrations/` (otherwise restore the backup the release made, from that run's artifacts).
 
 Each environment has its own Worker, D1 database and custom domain (`wrangler.jsonc`). Each also has its own R2 bucket for receipt photos. CI finds the database by name, creating it on first deploy, and writes its id into `wrangler.jsonc` in place of the placeholder (`scripts/resolve-d1.mjs`); it creates a missing bucket the same way (`scripts/ensure-r2.mjs`). R2 must be turned on for the Cloudflare account once (dashboard → R2), which its free tier covers.
 
@@ -114,7 +120,7 @@ For sign-in (each deploy copies these onto the Worker as secrets; one left unset
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | A Google OAuth *Web application* client (Google Cloud console → Google Auth Platform → Clients; scopes `openid email profile`). Authorized redirect URIs: `https://wisesplit.llmat.dev/api/auth/google/callback` and `https://staging.wisesplit.llmat.dev/api/auth/google/callback` (plus `http://localhost:8787/api/auth/google/callback` for local use). The jaysbadminton client can be reused by adding these URIs. |
 | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | A Cloudflare Turnstile widget (dashboard → Turnstile → Add widget, mode *Managed*) with hostnames `wisesplit.llmat.dev` and `staging.wisesplit.llmat.dev`. Without them the sites refuse sign-ups. |
 | `ADMIN_EMAILS` | The admin's Google email (comma-separate several). |
-| `TEST_LOGIN_SECRET_STAGING` | Optional: any long random string, to use the test login on staging. Never sent to production. |
+| `TEST_LOGIN_SECRET_STAGING` | Any long random string (e.g. `openssl rand -hex 32`): turns on the test login on staging, so CI can run the launch browser test there after each deploy. Never sent to production. |
 | `RESEND_API_KEY` | A [Resend](https://resend.com) API key (*Sending access* is enough) for the live site's notification emails. Without it (or `EMAIL_FROM`) no email is sent. Resend's free tier sends 100 a day per account, so sharing jaysbadminton's key shares that allowance. |
 | `RESEND_API_KEY_STAGING` | Optional: a key for the test site's emails, best from a separate Resend account so testing can't use up the live site's daily allowance. That account must verify the `EMAIL_FROM` domain too. Without it the test site sends none. |
 | `EMAIL_FROM` | The sender, e.g. `wisesplit <notify@llmat.dev>`, on a domain verified in Resend. |
@@ -122,3 +128,14 @@ For sign-in (each deploy copies these onto the Worker as secrets; one left unset
 The same Cloudflare token jaysbadminton uses works if it already has those permissions. The `staging.wisesplit.llmat.dev` and `wisesplit.llmat.dev` DNS records and certificates are created by `wrangler deploy` (custom domains); nothing needs to be added by hand.
 
 The Web Push key needs nothing from you: the first deploy to each environment makes one (see above).
+
+### Going live
+
+The first release, in order:
+
+1. Set every secret in the tables above in GitHub. Each deploy of the test site warns in its log about any still missing.
+2. Google Cloud console → Google Auth Platform → *Audience*: *Publish app*, so its status is *In production*. While it is *Testing*, only the test users listed there can sign in. With only the `openid email profile` scopes, publishing needs no review by Google.
+3. Resend: the `EMAIL_FROM` domain shows *Verified*.
+4. Merge to `main` and wait for its CI run to go green, launch test on staging included. Try the test site with your own Google account too.
+5. Actions → *Release* → *Run workflow* on `main`. The run on the new tag backs up the (empty) database, deploys, and smoke tests the live site.
+6. Sign in at https://wisesplit.llmat.dev with the `ADMIN_EMAILS` account: it is approved straight away. Check `/admin/settings` (approval on, daily cap, pending-list limit) before sharing the address.

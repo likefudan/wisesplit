@@ -8,6 +8,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:e2e": "vite build && playwright test",
+    "test:e2e:staging": "E2E_BASE_URL=https://staging.wisesplit.llmat.dev playwright test",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "lint": "biome check .",
     "format": "biome check --write ."
